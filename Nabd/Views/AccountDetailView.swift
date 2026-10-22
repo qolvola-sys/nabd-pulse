@@ -207,28 +207,34 @@ struct AccountDetailView: View {
 
     private var engagementRow: some View {
         HStack(spacing: 0) {
-            engagementItem(icon: "heart.fill", value: current.videoLikes, tint: Theme.pink)
+            engagementItem(icon: "heart.fill", value: current.videoLikes, label: "إعجاب", tint: Theme.pink)
             Rectangle().fill(Theme.borderSoft).frame(width: 1, height: 26)
-            engagementItem(icon: "bubble.right.fill", value: current.comments, tint: Theme.cyan)
+            engagementItem(icon: "bubble.right.fill", value: current.comments, label: "تعليق", tint: Theme.cyan)
             Rectangle().fill(Theme.borderSoft).frame(width: 1, height: 26)
-            engagementItem(icon: "arrowshape.turn.up.right.fill", value: current.shares, tint: Theme.violet)
+            engagementItem(icon: "arrowshape.turn.up.right.fill", value: current.shares, label: "مشاركة", tint: Theme.violet)
             Rectangle().fill(Theme.borderSoft).frame(width: 1, height: 26)
-            engagementItem(icon: "hand.thumbsup.fill", value: current.likes, tint: Theme.gold)
+            engagementItem(icon: "person.2.fill", value: current.followers, label: "متابع", tint: Theme.gold)
         }
         .padding(.vertical, 12)
         .card(padding: 0, radius: 18)
     }
 
-    private func engagementItem(icon: String, value: Int64, tint: Color) -> some View {
-        VStack(spacing: 5) {
+    private func engagementItem(icon: String, value: Int64, label: String, tint: Color) -> some View {
+        VStack(spacing: 4) {
             Image(systemName: icon)
                 .font(.system(size: 11))
                 .foregroundColor(tint)
             Text(Num.compact(value))
-                .font(.system(size: 12.5, weight: .bold, design: .rounded))
+                .font(.system(size: 12, weight: .bold, design: .rounded))
                 .foregroundColor(Theme.text)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            Text(label)
+                .font(.system(size: 8.5))
+                .foregroundColor(Theme.textTertiary)
         }
         .frame(maxWidth: .infinity)
+        .padding(.horizontal, 2)
     }
 
     private var coverageCard: some View {
@@ -342,8 +348,16 @@ struct AccountDetailView: View {
         .padding(.top, 10)
         .padding(.bottom, 4)
         .background(
-            LinearGradient(colors: [Theme.bg.opacity(0), Theme.bg], startPoint: .top, endPoint: .bottom)
-                .ignoresSafeArea()
+            LinearGradient(
+                stops: [
+                    .init(color: Theme.bg.opacity(0), location: 0),
+                    .init(color: Theme.bg.opacity(0.9), location: 0.3),
+                    .init(color: Theme.bg, location: 0.6),
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .ignoresSafeArea()
         )
     }
 

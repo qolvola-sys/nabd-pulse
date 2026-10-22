@@ -98,11 +98,11 @@ struct AddAccountsView: View {
 
     private var inputCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack {
+            HStack(spacing: 14) {
                 Label("روابط الحسابات", systemImage: "link")
                     .font(.system(size: 11.5, weight: .bold))
                     .foregroundColor(Theme.textSecondary)
-                Spacer()
+                Spacer(minLength: 12)
                 if !text.isEmpty {
                     Button("مسح") { text = "" }
                         .font(.system(size: 11, weight: .semibold))
@@ -122,19 +122,23 @@ struct AddAccountsView: View {
                     Text("https://www.tiktok.com/@username\n@username2\nhttps://vm.tiktok.com/ZMxxxxx/")
                         .font(.system(size: 12.5, design: .monospaced))
                         .foregroundColor(Theme.textTertiary)
+                        .multilineTextAlignment(.leading)
                         .padding(.top, 8)
                         .padding(.horizontal, 5)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                         .allowsHitTesting(false)
                 }
                 TextEditor(text: $text)
                     .font(.system(size: 13, design: .monospaced))
                     .foregroundColor(Theme.text)
+                    .multilineTextAlignment(.leading)
                     .scrollContentBackground(.hidden)
                     .frame(minHeight: 150)
                     .focused($editorFocused)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
             }
+            .environment(\.layoutDirection, .leftToRight)
             .padding(10)
             .background(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)

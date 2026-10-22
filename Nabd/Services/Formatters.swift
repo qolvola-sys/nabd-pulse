@@ -4,7 +4,10 @@ enum Num {
     private static let grouped: NumberFormatter = {
         let formatter = NumberFormatter()
         formatter.numberStyle = .decimal
-        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.locale = Locale(identifier: "en_US")
+        formatter.usesGroupingSeparator = true
+        formatter.groupingSeparator = ","
+        formatter.groupingSize = 3
         formatter.maximumFractionDigits = 0
         return formatter
     }()

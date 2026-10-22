@@ -318,22 +318,15 @@ struct AccountRow: View {
                 }
             }
 
-            HStack(spacing: 14) {
-                miniStat(icon: "square.stack.3d.up.fill", value: Num.full(Int64(account.posts)), label: "منشور")
-                miniStat(icon: "chart.bar.fill", value: Num.compact(account.avgViewsPerPost), label: "متوسط")
-                miniStat(icon: "person.fill", value: Num.compact(account.followers), label: "متابع")
+            HStack(alignment: .center, spacing: 10) {
+                statColumn(value: Num.full(Int64(account.posts)), label: "منشور")
+                statColumn(value: Num.compact(account.avgViewsPerPost), label: "متوسط")
+                statColumn(value: Num.compact(account.followers), label: "متابع")
 
-                Spacer(minLength: 0)
+                Spacer(minLength: 2)
 
-                if account.status == "needs_reconnect" {
-                    Chip(text: "أعد الربط", color: Theme.red, icon: "exclamationmark.triangle.fill")
-                } else if !account.connected {
-                    Chip(text: "غير مربوط", color: Theme.gold, icon: "link.badge.plus")
-                } else if account.status == "error" {
-                    Chip(text: "خطأ", color: Theme.red)
-                } else if account.coverage < 0.95 && account.coverage > 0 {
-                    Chip(text: "تحليل جزئي", color: Theme.violet)
-                }
+                statusChip
+                    .layoutPriority(1)
             }
 
             ProgressBarLine(
@@ -345,17 +338,30 @@ struct AccountRow: View {
         .card(padding: 14, radius: 20)
     }
 
-    private func miniStat(icon: String, value: String, label: String) -> some View {
-        HStack(spacing: 4) {
-            Image(systemName: icon)
-                .font(.system(size: 8.5))
-                .foregroundColor(Theme.textTertiary)
+    private func statColumn(value: String, label: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
             Text(value)
-                .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+                .font(.system(size: 11.5, weight: .semibold, design: .rounded))
                 .foregroundColor(Theme.textSecondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
             Text(label)
-                .font(.system(size: 9.5))
+                .font(.system(size: 9))
                 .foregroundColor(Theme.textTertiary)
+        }
+        .frame(minWidth: 52, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private var statusChip: some View {
+        if account.status == "needs_reconnect" {
+            Chip(text: "أعد الربط", color: Theme.red, icon: "exclamationmark.triangle.fill")
+        } else if !account.connected {
+            Chip(text: "غير مربوط", color: Theme.gold, icon: "link.badge.plus")
+        } else if account.status == "error" {
+            Chip(text: "خطأ", color: Theme.red)
+        } else if account.coverage < 0.95 && account.coverage > 0 {
+            Chip(text: "جزئي", color: Theme.violet, icon: "chart.pie.fill")
         }
     }
 }

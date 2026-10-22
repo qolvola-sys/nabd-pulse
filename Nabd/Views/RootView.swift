@@ -75,6 +75,19 @@ struct RootView: View {
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             TabBar(selection: $tab)
+                .padding(.bottom, 4)
+                .background(
+                    LinearGradient(
+                        stops: [
+                            .init(color: Theme.bg.opacity(0), location: 0),
+                            .init(color: Theme.bg.opacity(0.92), location: 0.32),
+                            .init(color: Theme.bg, location: 0.7),
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    .ignoresSafeArea(edges: .bottom)
+                )
         }
         .environment(\.layoutDirection, .rightToLeft)
         .preferredColorScheme(.dark)

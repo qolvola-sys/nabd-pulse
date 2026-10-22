@@ -9,3 +9,5 @@ DerivedData/
 *.xcworkspace/
 Payload/
 *.ipa
+preview-shots/
+ipa-out/

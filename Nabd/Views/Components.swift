@@ -42,10 +42,10 @@ struct AvatarView: View {
         .overlay(alignment: .bottomTrailing) {
             if showVerified && account.isVerified {
                 Image(systemName: "checkmark.seal.fill")
-                    .font(.system(size: size * 0.26))
+                    .font(.system(size: size * 0.24))
                     .foregroundColor(Theme.cyan)
                     .background(Circle().fill(Theme.bg).padding(1.5))
-                    .offset(x: 2, y: 2)
+                    .padding(2)
             }
         }
     }

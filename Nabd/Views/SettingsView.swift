@@ -67,27 +67,10 @@ struct SettingsView: View {
             }
 
             fieldLabel("عنوان الخادم")
-            TextField("https://api.example.com", text: $url)
-                .font(.system(size: 13, design: .monospaced))
-                .foregroundColor(Theme.text)
-                .keyboardType(.URL)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .padding(.horizontal, 12)
-                .frame(height: 44)
-                .background(RoundedRectangle(cornerRadius: 12).fill(Theme.bgSoft))
-                .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.borderSoft, lineWidth: 1))
+            inputField("https://api.example.com", text: $url, keyboard: .URL)
 
             fieldLabel("مفتاح الوصول API_TOKEN")
-            SecureField("••••••••", text: $token)
-                .font(.system(size: 13, design: .monospaced))
-                .foregroundColor(Theme.text)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .padding(.horizontal, 12)
-                .frame(height: 44)
-                .background(RoundedRectangle(cornerRadius: 12).fill(Theme.bgSoft))
-                .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.borderSoft, lineWidth: 1))
+            inputField("••••••••", text: $token, isSecure: true)
 
             HStack(spacing: 9) {
                 Button {
@@ -123,6 +106,43 @@ struct SettingsView: View {
         Text(text)
             .font(.system(size: 10.5, weight: .semibold))
             .foregroundColor(Theme.textTertiary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func inputField(
+        _ placeholder: String,
+        text: Binding<String>,
+        isSecure: Bool = false,
+        keyboard: UIKeyboardType = .default
+    ) -> some View {
+        ZStack(alignment: .leading) {
+            if text.wrappedValue.isEmpty {
+                Text(placeholder)
+                    .font(.system(size: 12.5, design: .monospaced))
+                    .foregroundColor(Theme.textTertiary.opacity(0.75))
+                    .allowsHitTesting(false)
+            }
+
+            Group {
+                if isSecure {
+                    SecureField("", text: text)
+                } else {
+                    TextField("", text: text)
+                }
+            }
+            .font(.system(size: 13, design: .monospaced))
+            .foregroundColor(Theme.text)
+            .tint(Theme.cyan)
+            .keyboardType(keyboard)
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
+            .multilineTextAlignment(.leading)
+        }
+        .environment(\.layoutDirection, .leftToRight)
+        .padding(.horizontal, 12)
+        .frame(height: 44)
+        .background(RoundedRectangle(cornerRadius: 12).fill(Theme.bgSoft))
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.borderSoft, lineWidth: 1))
     }
 
     private func reportBanner(_ report: ConnectionReport) -> some View {
