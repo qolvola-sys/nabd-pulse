@@ -1,0 +1,18 @@
+{
+  "name": "nabd-pulse-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Backend for Nabd — TikTok multi-account analytics (OAuth + Display API)",
+  "type": "module",
+  "engines": {
+    "node": ">=22.5"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "smoke": "node scripts/smoke.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  }
+}

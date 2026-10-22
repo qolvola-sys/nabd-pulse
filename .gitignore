@@ -1,0 +1,11 @@
+node_modules/
+data/
+.env
+*.log
+.DS_Store
+build/
+DerivedData/
+*.xcodeproj/
+*.xcworkspace/
+Payload/
+*.ipa

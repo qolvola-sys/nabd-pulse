@@ -1,0 +1,63 @@
+name: Build Nabd IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+
+jobs:
+  build:
+    name: Build unsigned IPA
+    runs-on: macos-15
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build app (no code signing)
+        run: |
+          xcodebuild \
+            -project Nabd.xcodeproj \
+            -scheme Nabd \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Verify Info.plist
+        run: |
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" build/Build/Products/Release-iphoneos/Nabd.app/Info.plist
+          /usr/libexec/PlistBuddy -c "Print :MinimumOSVersion" build/Build/Products/Release-iphoneos/Nabd.app/Info.plist
+
+      - name: Package into IPA
+        run: |
+          APP_PATH="build/Build/Products/Release-iphoneos/Nabd.app"
+          ls -la "$APP_PATH"
+          rm -rf Payload Nabd.ipa
+          mkdir -p Payload
+          cp -R "$APP_PATH" Payload/
+          zip -r -q Nabd.ipa Payload
+          ls -lh Nabd.ipa
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Nabd-unsigned-ipa
+          path: Nabd.ipa
+          retention-days: 30
