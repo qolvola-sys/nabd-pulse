@@ -58,6 +58,8 @@ targets:
         UIApplicationSupportsIndirectInputEvents: true
         ITSAppUsesNonExemptEncryption: false
         NSAppTransportSecurity:
+          # يسمح باختبار خادمك عبر HTTP على شبكة محلية أثناء التجربة.
+          NSAllowsArbitraryLoads: true
           NSAllowsLocalNetworking: true
         CFBundleURLTypes:
           - CFBundleURLName: "com.nabd.pulse.oauth"
