@@ -35,6 +35,7 @@ enum AppTab: String, CaseIterable, Identifiable {
 
 struct RootView: View {
     @EnvironmentObject private var store: AppStore
+    @Environment(\.scenePhase) private var scenePhase
     @State private var tab: AppTab
 
     init() {
@@ -93,6 +94,9 @@ struct RootView: View {
         .preferredColorScheme(.dark)
         .tint(Theme.cyan)
         .onAppear { store.bootstrap() }
+        .onChange(of: scenePhase) { phase in
+            if phase == .active { store.refreshIfStale() }
+        }
     }
 
     private func switchTab(_ target: AppTab) {

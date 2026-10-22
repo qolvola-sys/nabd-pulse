@@ -167,9 +167,10 @@ final class AppStore: ObservableObject {
     func refreshIfStale() {
         guard !isDemo else { return }
         guard autoSync else { return }
+        guard lastRefreshed != nil, !isLoading, !isSyncing else { return }
         if let lastAutoRefresh, Date().timeIntervalSince(lastAutoRefresh) < 90 { return }
         lastAutoRefresh = Date()
-        Task { await refresh() }
+        Task { await refresh(showSpinner: false) }
     }
 
     private func applyModeChange() {
