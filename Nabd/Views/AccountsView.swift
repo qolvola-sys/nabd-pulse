@@ -324,7 +324,7 @@ struct AccountRow: View {
 
             HStack(alignment: .center, spacing: 10) {
                 statColumn(value: Num.full(Int64(account.posts24h)), label: "منشور ٢٤س")
-                statColumn(value: Num.compact(account.views24h), label: "مشاهدات ٢٤س")
+                statColumn(value: Num.compact(account.avgViews24h), label: "متوسط ٢٤س")
                 statColumn(value: Num.compact(account.followers), label: "متابع")
 
                 Spacer(minLength: 2)

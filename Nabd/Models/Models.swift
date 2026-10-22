@@ -73,6 +73,11 @@ struct Account: Identifiable, Codable, Hashable {
         avgViews > 0 ? avgViews : (posts > 0 ? views / Int64(posts) : 0)
     }
 
+    /// متوسط مشاهدات المنشور الواحد خلال آخر ٢٤ ساعة.
+    var avgViews24h: Int64 {
+        posts24h > 0 ? views24h / Int64(posts24h) : 0
+    }
+
     /// هل لدينا مشاهدات حقيقية؟ (تأتي فقط من الحسابات المربوطة عبر Display API)
     var hasViewData: Bool { views > 0 }
 
