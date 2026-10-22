@@ -11,3 +11,7 @@ Payload/
 *.ipa
 preview-shots/
 ipa-out/
+server/data*/
+*.db
+*.db-wal
+*.db-shm

@@ -57,11 +57,11 @@ jobs:
             xcrun simctl io "$DEVICE" screenshot "shots/$name.png"
             echo "✓ $name"
           }
-          capture dashboard --screen=dashboard
-          capture accounts --screen=accounts
-          capture detail --screen=accounts --sheet=detail
-          capture add --screen=accounts --sheet=add
-          capture settings --screen=settings
+          capture dashboard --demo --screen=dashboard
+          capture accounts --demo --screen=accounts
+          capture detail --demo --screen=accounts --sheet=detail
+          capture add --demo --screen=accounts --sheet=add
+          capture settings --demo --screen=settings
           ls -lh shots
 
       - name: Upload screenshots

@@ -102,6 +102,11 @@ final class AppStore: ObservableObject {
         autoSync = defaults.object(forKey: Keys.autoSync) as? Bool ?? true
         hapticsEnabled = defaults.object(forKey: Keys.haptics) as? Bool ?? true
         apiToken = Keychain.get(Keys.token)
+
+        // لقطات CI: --demo يعرض بيانات تجريبية بدون تغيير إعداد المستخدم
+        if ProcessInfo.processInfo.arguments.contains("--demo") {
+            demoMode = true
+        }
     }
 
     // MARK: - اشتقاقات
