@@ -133,7 +133,7 @@ struct AddAccountsView: View {
                     .foregroundColor(Theme.text)
                     .multilineTextAlignment(.leading)
                     .scrollContentBackground(.hidden)
-                    .frame(minHeight: 150)
+                    .frame(height: 170)
                     .focused($editorFocused)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
