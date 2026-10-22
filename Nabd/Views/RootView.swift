@@ -35,7 +35,15 @@ enum AppTab: String, CaseIterable, Identifiable {
 
 struct RootView: View {
     @EnvironmentObject private var store: AppStore
-    @State private var tab: AppTab = .dashboard
+    @State private var tab: AppTab
+
+    init() {
+        // يُستخدم لمعاينة الشاشات داخل CI: --screen=accounts
+        let requested = ProcessInfo.processInfo.arguments
+            .first { $0.hasPrefix("--screen=") }?
+            .replacingOccurrences(of: "--screen=", with: "")
+        _tab = State(initialValue: requested.flatMap(AppTab.init(rawValue:)) ?? .dashboard)
+    }
 
     var body: some View {
         ZStack(alignment: .top) {

@@ -100,6 +100,17 @@ struct AccountsView: View {
         .refreshable {
             await store.syncAll()
         }
+        .task {
+            // معاينة تلقائية داخل CI: --sheet=add أو --sheet=detail
+            let args = ProcessInfo.processInfo.arguments
+            guard let flag = args.first(where: { $0.hasPrefix("--sheet=") }) else { return }
+            try? await Task.sleep(nanoseconds: 900_000_000)
+            if flag == "--sheet=add" {
+                showAdd = true
+            } else if flag == "--sheet=detail", selected == nil {
+                selected = store.topAccounts.first
+            }
+        }
         .sheet(isPresented: $showAdd) {
             AddAccountsView()
                 .environmentObject(store)

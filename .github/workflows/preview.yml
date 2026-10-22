@@ -1,0 +1,72 @@
+name: Preview Screenshots
+
+on:
+  workflow_dispatch:
+
+jobs:
+  preview:
+    name: Build for simulator and capture screens
+    runs-on: macos-15
+    timeout-minutes: 35
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate project
+        run: xcodegen generate
+
+      - name: Build for simulator
+        run: |
+          xcodebuild \
+            -project Nabd.xcodeproj \
+            -scheme Nabd \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build-sim \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Boot simulator
+        run: |
+          DEVICE=$(xcrun simctl list devices available --json | jq -r '[.devices[][] | select(.name | test("iPhone"))][0].udid')
+          echo "DEVICE=$DEVICE" >> "$GITHUB_ENV"
+          xcrun simctl boot "$DEVICE" || true
+          xcrun simctl bootstatus "$DEVICE" -b
+          xcrun simctl status_bar "$DEVICE" override \
+            --time "9:41" --batteryState charged --batteryLevel 100 --wifiBars 3 --cellularBars 4 || true
+
+      - name: Install app
+        run: |
+          APP=$(find build-sim/Build/Products -maxdepth 3 -name "Nabd.app" | head -1)
+          echo "APP=$APP"
+          xcrun simctl install "$DEVICE" "$APP"
+
+      - name: Capture screens
+        run: |
+          mkdir -p shots
+          capture () {
+            name="$1"; shift
+            xcrun simctl terminate "$DEVICE" com.nabd.pulse >/dev/null 2>&1 || true
+            sleep 1
+            xcrun simctl launch "$DEVICE" com.nabd.pulse "$@" >/dev/null
+            sleep 5
+            xcrun simctl io "$DEVICE" screenshot "shots/$name.png"
+            echo "✓ $name"
+          }
+          capture dashboard --screen=dashboard
+          capture accounts --screen=accounts
+          capture detail --screen=accounts --sheet=detail
+          capture add --screen=accounts --sheet=add
+          capture settings --screen=settings
+          ls -lh shots
+
+      - name: Upload screenshots
+        uses: actions/upload-artifact@v4
+        with:
+          name: nabd-screenshots
+          path: shots
+          retention-days: 14
