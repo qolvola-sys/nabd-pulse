@@ -8,6 +8,8 @@ struct DashboardView: View {
     @State private var selectedAccount: Account?
     @State private var wavePhase: CGFloat = 0
 
+    private var hasViews: Bool { store.summary.views > 0 }
+
     private var topFive: [Account] {
         Array(store.topAccounts.prefix(5))
     }
@@ -17,11 +19,11 @@ struct DashboardView: View {
         var segments = top.enumerated().map { index, account in
             DonutSegment(
                 label: account.displayName,
-                value: account.views,
+                value: hasViews ? account.views : account.likes,
                 color: Theme.chartPalette[index % Theme.chartPalette.count]
             )
         }
-        let rest = store.topAccounts.dropFirst(4).reduce(Int64(0)) { $0 + $1.views }
+        let rest = store.topAccounts.dropFirst(4).reduce(Int64(0)) { $0 + (hasViews ? $1.views : $1.likes) }
         if rest > 0 {
             segments.append(DonutSegment(label: "حسابات أخرى", value: rest, color: Theme.textTertiary))
         }
@@ -180,10 +182,10 @@ struct DashboardView: View {
             VStack(alignment: .leading, spacing: 0) {
                 HStack {
                     HStack(spacing: 6) {
-                        Image(systemName: "play.rectangle.fill")
+                        Image(systemName: hasViews ? "play.rectangle.fill" : "hand.thumbsup.fill")
                             .font(.system(size: 11))
                             .foregroundColor(Theme.cyan)
-                        Text("إجمالي المشاهدات")
+                        Text(hasViews ? "إجمالي المشاهدات" : "إجمالي الإعجابات")
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundColor(Theme.textSecondary)
                     }
@@ -196,14 +198,14 @@ struct DashboardView: View {
                         .background(Capsule().fill(Color.white.opacity(0.07)))
                 }
 
-                Text(Num.compact(store.summary.views))
+                Text(Num.compact(hasViews ? store.summary.views : store.summary.likes))
                     .font(.system(size: 42, weight: .heavy, design: .rounded))
                     .foregroundColor(Theme.text)
                     .minimumScaleFactor(0.6)
                     .lineLimit(1)
                     .padding(.top, 12)
 
-                Text(Num.full(store.summary.views) + " مشاهدة")
+                Text(Num.full(hasViews ? store.summary.views : store.summary.likes) + (hasViews ? " مشاهدة" : " إعجاب"))
                     .font(.system(size: 11.5, weight: .medium, design: .rounded))
                     .foregroundColor(Theme.textTertiary)
                     .padding(.top, 2)
@@ -272,8 +274,8 @@ struct DashboardView: View {
                 hint: "على \(store.summary.accounts) حساباً"
             )
             StatCard(
-                title: "متوسط المشاهدات",
-                value: Num.compact(store.summary.avgViews),
+                title: hasViews ? "متوسط المشاهدات" : "متوسط الإعجابات",
+                value: Num.compact(hasViews ? store.summary.avgViews : averageLikesPerPost),
                 icon: "chart.line.uptrend.xyaxis",
                 tint: Theme.violet,
                 hint: "لكل منشور"
@@ -286,13 +288,17 @@ struct DashboardView: View {
                 hint: "مجموع الحسابات"
             )
             StatCard(
-                title: "معدل التفاعل",
-                value: Num.percent(engagementRate),
+                title: hasViews ? "معدل التفاعل" : "إجمالي الإعجابات",
+                value: hasViews ? Num.percent(engagementRate) : Num.compact(store.summary.likes),
                 icon: "hand.thumbsup.fill",
                 tint: Theme.gold,
-                hint: "إعجاب وتعليق ومشاركة"
+                hint: hasViews ? "إعجاب وتعليق ومشاركة" : "ظاهرة للعامة"
             )
         }
+    }
+
+    private var averageLikesPerPost: Int64 {
+        store.summary.posts > 0 ? store.summary.likes / Int64(store.summary.posts) : 0
     }
 
     private var engagementRate: Double {
@@ -330,13 +336,16 @@ struct DashboardView: View {
 
     private var distributionCard: some View {
         VStack(spacing: 16) {
-            SectionHeader(title: "توزيع المشاهدات", subtitle: "أكبر ٤ حسابات + الباقي")
+            SectionHeader(
+                title: hasViews ? "توزيع المشاهدات" : "توزيع الإعجابات",
+                subtitle: "أكبر ٤ حسابات + الباقي"
+            )
 
             HStack(alignment: .center, spacing: 18) {
                 DonutChart(
                     segments: donutSegments,
-                    centerValue: Num.compact(store.summary.views),
-                    centerCaption: "مشاهدة"
+                    centerValue: Num.compact(hasViews ? store.summary.views : store.summary.likes),
+                    centerCaption: hasViews ? "مشاهدة" : "إعجاب"
                 )
 
                 VStack(alignment: .leading, spacing: 9) {
@@ -362,7 +371,7 @@ struct DashboardView: View {
     }
 
     private func shareText(_ value: Int64) -> String {
-        let total = max(store.summary.views, 1)
+        let total = max(hasViews ? store.summary.views : store.summary.likes, 1)
         return Num.percent(Double(value) / Double(total))
     }
 
@@ -371,7 +380,7 @@ struct DashboardView: View {
     private var topAccountsCard: some View {
         VStack(spacing: 14) {
             SectionHeader(
-                title: "الأعلى مشاهدة",
+                title: hasViews ? "الأعلى مشاهدة" : "الأعلى إعجاباً",
                 subtitle: "أفضل الحسابات أداءً",
                 actionTitle: "كل الحسابات",
                 action: { onOpenAccounts() }
@@ -422,13 +431,13 @@ struct DashboardView: View {
                                         }
                                     }
                                     ProgressBarLine(
-                                        value: Double(account.views) / Double(max(topFive.first?.views ?? 1, 1)),
+                                        value: Double(hasViews ? account.views : account.likes) / Double(max((hasViews ? topFive.first?.views : topFive.first?.likes) ?? 1, 1)),
                                         height: 4
                                     )
                                 }
                                 Spacer(minLength: 8)
                                 VStack(alignment: .trailing, spacing: 2) {
-                                    Text(Num.compact(account.views))
+                                    Text(Num.compact(hasViews ? account.views : account.likes))
                                         .font(.system(size: 13, weight: .bold, design: .rounded))
                                         .foregroundColor(Theme.text)
                                     Text("\(Num.full(Int64(account.posts))) منشور")

@@ -28,6 +28,8 @@ db.exec(`
     total_comments   INTEGER DEFAULT 0,
     total_shares     INTEGER DEFAULT 0,
     fetched_videos   INTEGER DEFAULT 0,
+    posts_24h        INTEGER DEFAULT 0,
+    views_24h        INTEGER DEFAULT 0,
     connected        INTEGER DEFAULT 0,
     status           TEXT DEFAULT 'pending',
     error            TEXT,
@@ -76,11 +78,24 @@ db.exec(`
 
 export const nowIso = () => new Date().toISOString();
 
+// ترحيل قواعد البيانات القديمة: أعمدة إحصاءات آخر ٢٤ ساعة
+const accountTableInfo = db.prepare("PRAGMA table_info(accounts)").all();
+const accountColumnNames = new Set(accountTableInfo.map((column) => column.name));
+for (const [name, definition] of [
+  ["posts_24h", "INTEGER DEFAULT 0"],
+  ["views_24h", "INTEGER DEFAULT 0"],
+]) {
+  if (!accountColumnNames.has(name)) {
+    db.exec(`ALTER TABLE accounts ADD COLUMN ${name} ${definition}`);
+  }
+}
+
 export const accountColumns = [
   "id", "handle", "input_url", "open_id", "display_name", "avatar_url", "is_verified",
   "follower_count", "following_count", "likes_count", "video_count",
   "total_views", "total_likes", "total_comments", "total_shares",
-  "fetched_videos", "connected", "status", "error", "last_synced_at", "created_at",
+  "fetched_videos", "posts_24h", "views_24h",
+  "connected", "status", "error", "last_synced_at", "created_at",
 ];
 
 export function getMeta(key) {

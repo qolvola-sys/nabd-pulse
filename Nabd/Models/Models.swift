@@ -58,9 +58,12 @@ struct Account: Identifiable, Codable, Hashable {
     var comments: Int64
     var shares: Int64
     var fetchedVideos: Int
+    var posts24h: Int
+    var views24h: Int64
     var avgViews: Int64
     var coverage: Double
     var connected: Bool
+    var publicStats: Bool
     var status: String
     var error: String?
     var lastSyncedAt: String?
@@ -68,6 +71,13 @@ struct Account: Identifiable, Codable, Hashable {
 
     var avgViewsPerPost: Int64 {
         avgViews > 0 ? avgViews : (posts > 0 ? views / Int64(posts) : 0)
+    }
+
+    /// هل لدينا مشاهدات حقيقية؟ (تأتي فقط من الحسابات المربوطة عبر Display API)
+    var hasViewData: Bool { views > 0 }
+
+    var avgLikesPerPost: Int64 {
+        posts > 0 ? likes / Int64(posts) : 0
     }
 
     var engagementRate: Double {
@@ -80,6 +90,7 @@ struct Account: Identifiable, Codable, Hashable {
     var statusLabel: String {
         switch status {
         case "ok": return "متصل"
+        case "public": return "بيانات عامة"
         case "needs_reconnect": return "يحتاج إعادة ربط"
         case "error": return "تعذّر التحديث"
         default: return connected ? "متصل" : "غير مربوط"
@@ -100,8 +111,8 @@ struct Account: Identifiable, Codable, Hashable {
 
     enum CodingKeys: String, CodingKey {
         case id, platform, handle, url, displayName, avatarUrl, isVerified, followers, following
-        case likes, posts, views, videoLikes, comments, shares, fetchedVideos, avgViews, coverage
-        case connected, status, error, lastSyncedAt, createdAt
+        case likes, posts, views, videoLikes, comments, shares, fetchedVideos, posts24h, views24h
+        case avgViews, coverage, connected, publicStats, status, error, lastSyncedAt, createdAt
     }
 
     init(from decoder: Decoder) throws {
@@ -122,9 +133,12 @@ struct Account: Identifiable, Codable, Hashable {
         comments = c.flexInt64(.comments)
         shares = c.flexInt64(.shares)
         fetchedVideos = c.flexInt(.fetchedVideos)
+        posts24h = c.flexInt(.posts24h)
+        views24h = c.flexInt64(.views24h)
         avgViews = c.flexInt64(.avgViews)
         coverage = c.flexDouble(.coverage)
         connected = c.flexBool(.connected)
+        publicStats = c.flexBool(.publicStats)
         status = c.flexString(.status, default: "pending")
         error = c.flexStringOrNil(.error)
         lastSyncedAt = c.flexStringOrNil(.lastSyncedAt)
@@ -134,7 +148,9 @@ struct Account: Identifiable, Codable, Hashable {
     init(id: String, handle: String, displayName: String, url: String = "", avatarUrl: String? = nil,
          isVerified: Bool = false, followers: Int64 = 0, following: Int64 = 0, likes: Int64 = 0,
          posts: Int = 0, views: Int64 = 0, videoLikes: Int64 = 0, comments: Int64 = 0, shares: Int64 = 0,
-         fetchedVideos: Int = 0, avgViews: Int64 = 0, coverage: Double = 1, connected: Bool = true,
+         fetchedVideos: Int = 0, posts24h: Int = 0, views24h: Int64 = 0,
+         avgViews: Int64 = 0, coverage: Double = 1, connected: Bool = true,
+         publicStats: Bool = false,
          status: String = "ok", error: String? = nil, lastSyncedAt: String? = nil, createdAt: String = "") {
         self.id = id
         self.platform = "tiktok"
@@ -152,9 +168,12 @@ struct Account: Identifiable, Codable, Hashable {
         self.comments = comments
         self.shares = shares
         self.fetchedVideos = fetchedVideos
+        self.posts24h = posts24h
+        self.views24h = views24h
         self.avgViews = avgViews
         self.coverage = coverage
         self.connected = connected
+        self.publicStats = publicStats
         self.status = status
         self.error = error
         self.lastSyncedAt = lastSyncedAt
@@ -220,14 +239,17 @@ struct Summary: Codable, Hashable {
     var likes: Int64
     var comments: Int64
     var shares: Int64
+    var posts24h: Int
+    var views24h: Int64
     var avgViews: Int64
     var lastSyncedAt: String?
 
     static let empty = Summary(accounts: 0, connected: 0, posts: 0, views: 0, likes: 0,
-                               comments: 0, shares: 0, avgViews: 0, lastSyncedAt: nil)
+                               comments: 0, shares: 0, posts24h: 0, views24h: 0,
+                               avgViews: 0, lastSyncedAt: nil)
 
     enum CodingKeys: String, CodingKey {
-        case accounts, connected, posts, views, likes, comments, shares, avgViews, lastSyncedAt
+        case accounts, connected, posts, views, likes, comments, shares, posts24h, views24h, avgViews, lastSyncedAt
     }
 
     init(from decoder: Decoder) throws {
@@ -239,12 +261,15 @@ struct Summary: Codable, Hashable {
         likes = c.flexInt64(.likes)
         comments = c.flexInt64(.comments)
         shares = c.flexInt64(.shares)
+        posts24h = c.flexInt(.posts24h)
+        views24h = c.flexInt64(.views24h)
         avgViews = c.flexInt64(.avgViews)
         lastSyncedAt = c.flexStringOrNil(.lastSyncedAt)
     }
 
     init(accounts: Int, connected: Int, posts: Int, views: Int64, likes: Int64,
-         comments: Int64, shares: Int64, avgViews: Int64, lastSyncedAt: String?) {
+         comments: Int64, shares: Int64, posts24h: Int, views24h: Int64,
+         avgViews: Int64, lastSyncedAt: String?) {
         self.accounts = accounts
         self.connected = connected
         self.posts = posts
@@ -252,6 +277,8 @@ struct Summary: Codable, Hashable {
         self.likes = likes
         self.comments = comments
         self.shares = shares
+        self.posts24h = posts24h
+        self.views24h = views24h
         self.avgViews = avgViews
         self.lastSyncedAt = lastSyncedAt
     }
@@ -262,6 +289,8 @@ struct Summary: Codable, Hashable {
         let likes = accounts.reduce(Int64(0)) { $0 + $1.videoLikes }
         let comments = accounts.reduce(Int64(0)) { $0 + $1.comments }
         let shares = accounts.reduce(Int64(0)) { $0 + $1.shares }
+        let posts24h = accounts.reduce(0) { $0 + $1.posts24h }
+        let views24h = accounts.reduce(Int64(0)) { $0 + $1.views24h }
         let synced = accounts.compactMap { $0.lastSyncedAt }.sorted().last
         return Summary(
             accounts: accounts.count,
@@ -271,6 +300,8 @@ struct Summary: Codable, Hashable {
             likes: likes,
             comments: comments,
             shares: shares,
+            posts24h: posts24h,
+            views24h: views24h,
             avgViews: posts > 0 ? views / Int64(posts) : 0,
             lastSyncedAt: synced
         )

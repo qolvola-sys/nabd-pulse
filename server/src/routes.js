@@ -6,7 +6,7 @@ import {
 } from "./db.js";
 import { encryptSecret, randomId, randomState } from "./security.js";
 import { buildAuthorizeUrl, exchangeCode, fetchUserInfo, TikTokError } from "./tiktok.js";
-import { syncAccount, syncAll } from "./sync.js";
+import { syncAccount, syncAll, refreshStale } from "./sync.js";
 import { seedDemoAccountsIfEmpty } from "./demo.js";
 
 const api = express.Router();
@@ -16,6 +16,8 @@ const AVG = (views, posts) => (posts > 0 ? Math.round(views / posts) : 0);
 
 function serializeAccount(row) {
   if (!row) return null;
+  const fetched = row.fetched_videos ?? 0;
+  const avgBase = row.status === "public" ? fetched : (row.video_count ?? 0);
   return {
     id: row.id,
     platform: "tiktok",
@@ -32,10 +34,14 @@ function serializeAccount(row) {
     videoLikes: row.total_likes ?? 0,
     comments: row.total_comments ?? 0,
     shares: row.total_shares ?? 0,
-    fetchedVideos: row.fetched_videos ?? 0,
-    avgViews: AVG(row.total_views ?? 0, row.video_count ?? 0),
-    coverage: row.video_count > 0 ? Math.min(1, (row.fetched_videos ?? 0) / row.video_count) : 0,
+    fetchedVideos: fetched,
+    posts24h: row.posts_24h ?? 0,
+    views24h: row.views_24h ?? 0,
+    last24h: { posts: row.posts_24h ?? 0, views: row.views_24h ?? 0 },
+    avgViews: AVG(row.total_views ?? 0, avgBase),
+    coverage: row.video_count > 0 ? Math.min(1, fetched / row.video_count) : 0,
     connected: Boolean(row.connected),
+    publicStats: row.status === "public",
     status: row.status || "pending",
     error: row.error || null,
     lastSyncedAt: row.last_synced_at || null,
@@ -85,6 +91,8 @@ export function summaryOf(rows) {
   const likes = rows.reduce((s, a) => s + (a.total_likes ?? 0), 0);
   const comments = rows.reduce((s, a) => s + (a.total_comments ?? 0), 0);
   const shares = rows.reduce((s, a) => s + (a.total_shares ?? 0), 0);
+  const posts24h = rows.reduce((s, a) => s + (a.posts_24h ?? 0), 0);
+  const views24h = rows.reduce((s, a) => s + (a.views_24h ?? 0), 0);
   const synced = rows.map((a) => a.last_synced_at).filter(Boolean).sort().at(-1) ?? null;
   return {
     accounts: rows.length,
@@ -94,6 +102,9 @@ export function summaryOf(rows) {
     likes,
     comments,
     shares,
+    posts24h,
+    views24h,
+    last24h: { posts: posts24h, views: views24h },
     avgViews: AVG(views, posts),
     lastSyncedAt: synced,
   };
@@ -118,12 +129,17 @@ api.get("/accounts", (req, res) => {
   }
   const sorters = {
     views: (a, b) => (b.total_views ?? 0) - (a.total_views ?? 0),
+    views24h: (a, b) => (b.views_24h ?? 0) - (a.views_24h ?? 0),
+    posts24h: (a, b) => (b.posts_24h ?? 0) - (a.posts_24h ?? 0),
     posts: (a, b) => (b.video_count ?? 0) - (a.video_count ?? 0),
     followers: (a, b) => (b.follower_count ?? 0) - (a.follower_count ?? 0),
     name: (a, b) => String(a.display_name || a.handle).localeCompare(String(b.display_name || b.handle), "ar"),
     recent: (a, b) => String(b.last_synced_at || "").localeCompare(String(a.last_synced_at || "")),
   };
   rows.sort(sorters[sort] || sorters.views);
+
+  // تحديث صامت لأي حساب مرّ عليه أكثر من 24 ساعة (لا يعطّل الاستجابة)
+  refreshStale().catch((error) => console.warn("تحديث تلقائي:", error.message));
 
   res.json({ accounts: rows.map(serializeAccount), summary: summaryOf(rows) });
 });
@@ -226,13 +242,14 @@ api.post("/sync", async (req, res, next) => {
 
 api.get("/export.csv", (req, res) => {
   const rows = listAccounts();
-  const header = ["المنصة", "الحساب", "الاسم", "الرابط", "المنشورات", "المشاهدات", "متوسط المشاهدات", "الإعجابات", "التعليقات", "المشاركات", "المتابعون", "آخر مزامنة"];
+  const header = ["المنصة", "الحساب", "الاسم", "الرابط", "المنشورات", "المشاهدات", "منشورات آخر 24 ساعة", "مشاهدات آخر 24 ساعة", "متوسط المشاهدات", "الإعجابات", "التعليقات", "المشاركات", "المتابعون", "آخر مزامنة"];
   const cell = (value) => `"${String(value ?? "").replace(/"/g, '""')}"`;
   const lines = [header.map(cell).join(",")];
   for (const row of rows) {
     lines.push([
       "TikTok", `@${row.handle}`, row.display_name || "", row.input_url || "",
-      row.video_count ?? 0, row.total_views ?? 0, AVG(row.total_views ?? 0, row.video_count ?? 0),
+      row.video_count ?? 0, row.total_views ?? 0, row.posts_24h ?? 0, row.views_24h ?? 0,
+      AVG(row.total_views ?? 0, row.video_count ?? 0),
       row.total_likes ?? 0, row.total_comments ?? 0, row.total_shares ?? 0,
       row.follower_count ?? 0, row.last_synced_at ?? "",
     ].map(cell).join(","));
@@ -367,6 +384,8 @@ api.get("/meta", (req, res) => {
     tiktokConfigured: Boolean(config.tiktok.clientKey && config.tiktok.clientSecret),
     maxVideosPerAccount: config.maxVideosPerAccount,
     cacheTtlSeconds: config.cacheTtlSeconds,
+    statsWindowHours: 24,
+    publicStats: true,
     serverTime: new Date().toISOString(),
     seeded: getMeta("demo_seeded") === "1",
   });

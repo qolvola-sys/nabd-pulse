@@ -137,7 +137,9 @@ struct AccountsView: View {
     }
 
     private var maxViews: Int64 {
-        max(store.accounts.map { $0.views }.max() ?? 1, 1)
+        let useViews = store.accounts.contains { $0.hasViewData }
+        let values = store.accounts.map { useViews ? $0.views : $0.likes }
+        return max(values.max() ?? 1, 1)
     }
 
     private var header: some View {
@@ -172,10 +174,15 @@ struct AccountsView: View {
     }
 
     private var summaryStrip: some View {
-        HStack(spacing: 0) {
+        let hasViews = store.summary.views > 0
+        return HStack(spacing: 0) {
             stripItem(title: "المنشورات", value: Num.compact(Int64(store.summary.posts)), tint: Theme.cyan)
             Rectangle().fill(Theme.borderSoft).frame(width: 1, height: 24)
-            stripItem(title: "المشاهدات", value: Num.compact(store.summary.views), tint: Theme.violet)
+            stripItem(
+                title: hasViews ? "المشاهدات" : "الإعجابات",
+                value: Num.compact(hasViews ? store.summary.views : store.summary.likes),
+                tint: Theme.violet
+            )
             Rectangle().fill(Theme.borderSoft).frame(width: 1, height: 24)
             stripItem(title: "المتصل", value: "\(store.connectedCount)/\(store.accounts.count)", tint: Theme.green)
         }
@@ -309,10 +316,10 @@ struct AccountRow: View {
                 Spacer(minLength: 6)
 
                 VStack(alignment: .trailing, spacing: 2) {
-                    Text(Num.compact(account.views))
+                    Text(Num.compact(account.hasViewData ? account.views : account.likes))
                         .font(.system(size: 15, weight: .bold, design: .rounded))
                         .foregroundColor(Theme.text)
-                    Text("مشاهدة")
+                    Text(account.hasViewData ? "مشاهدة" : "إعجاب")
                         .font(.system(size: 9.5))
                         .foregroundColor(Theme.textTertiary)
                 }
@@ -320,7 +327,10 @@ struct AccountRow: View {
 
             HStack(alignment: .center, spacing: 10) {
                 statColumn(value: Num.full(Int64(account.posts)), label: "منشور")
-                statColumn(value: Num.compact(account.avgViewsPerPost), label: "متوسط")
+                statColumn(
+                    value: Num.compact(account.hasViewData ? account.avgViewsPerPost : account.avgLikesPerPost),
+                    label: "متوسط"
+                )
                 statColumn(value: Num.compact(account.followers), label: "متابع")
 
                 Spacer(minLength: 2)
@@ -330,7 +340,7 @@ struct AccountRow: View {
             }
 
             ProgressBarLine(
-                value: Double(account.views) / Double(max(maxViews, 1)),
+                value: Double(account.hasViewData ? account.views : account.likes) / Double(max(maxViews, 1)),
                 gradient: LinearGradient(colors: [palette.opacity(0.9), palette.opacity(0.4)], startPoint: .leading, endPoint: .trailing),
                 height: 3
             )
@@ -356,6 +366,8 @@ struct AccountRow: View {
     private var statusChip: some View {
         if account.status == "needs_reconnect" {
             Chip(text: "أعد الربط", color: Theme.red, icon: "exclamationmark.triangle.fill")
+        } else if account.status == "public" {
+            Chip(text: "بيانات عامة", color: Theme.cyan, icon: "globe")
         } else if !account.connected {
             Chip(text: "غير مربوط", color: Theme.gold, icon: "link.badge.plus")
         } else if account.status == "error" {

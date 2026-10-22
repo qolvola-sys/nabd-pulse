@@ -146,8 +146,8 @@ struct AccountDetailView: View {
                 Chip(text: "TikTok", color: Theme.pink, icon: "play.rectangle.fill")
                 Chip(
                     text: current.statusLabel,
-                    color: current.connected ? (current.isHealthy ? Theme.green : Theme.gold) : Theme.gold,
-                    icon: current.connected ? "checkmark.circle.fill" : "link.badge.plus"
+                    color: current.publicStats ? Theme.cyan : (current.connected ? (current.isHealthy ? Theme.green : Theme.gold) : Theme.gold),
+                    icon: current.publicStats ? "globe" : (current.connected ? "checkmark.circle.fill" : "link.badge.plus")
                 )
                 if current.isVerified {
                     Chip(text: "موثّق", color: Theme.cyan, icon: "checkmark.seal.fill")
@@ -163,11 +163,11 @@ struct AccountDetailView: View {
                 Image(systemName: "link.circle.fill")
                     .font(.system(size: 18))
                     .foregroundColor(Theme.cyan)
-                Text("اربط الحساب لعرض إحصاءاته")
+                Text("اربط الحساب لعرض المشاهدات")
                     .font(.system(size: 13, weight: .bold))
                     .foregroundColor(Theme.text)
             }
-            Text("يُطلب منك تسجيل الدخول إلى TikTok مرة واحدة. تُحفظ الصلاحية على خادمك الخاص ويمكنك فصلها في أي وقت.")
+            Text("البيانات العامة محدّثة الآن (منشورات، متابعون، إعجابات). مشاهدات الفيديو تحتاج تسجيل دخول مرة واحدة لحسابك على TikTok، وتُحفظ الصلاحية على خادمك الخاص ويمكن فصلها في أي وقت.")
                 .font(.system(size: 11))
                 .foregroundColor(Theme.textSecondary)
                 .lineSpacing(4)
@@ -181,7 +181,7 @@ struct AccountDetailView: View {
                     } else {
                         Image(systemName: "link").font(.system(size: 13, weight: .bold))
                     }
-                    Text(store.connectingAccountID == current.id ? "جارٍ الربط…" : "ربط الحساب")
+                    Text(store.connectingAccountID == current.id ? "جارٍ الربط…" : "ربط الحساب لعرض المشاهدات")
                 }
             }
             .buttonStyle(GradientButtonStyle(height: 46))
@@ -199,20 +199,41 @@ struct AccountDetailView: View {
     private var statsGrid: some View {
         LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
             StatCard(title: "المنشورات", value: Num.compact(Int64(current.posts)), icon: "square.stack.3d.up.fill", tint: Theme.cyan)
-            StatCard(title: "المشاهدات", value: Num.compact(current.views), icon: "play.fill", tint: Theme.violet)
-            StatCard(title: "متوسط المشاهدات", value: Num.compact(current.avgViewsPerPost), icon: "chart.bar.fill", tint: Theme.pink)
+            StatCard(
+                title: "المشاهدات",
+                value: current.hasViewData ? Num.compact(current.views) : "—",
+                icon: "play.fill",
+                tint: Theme.violet,
+                hint: current.hasViewData ? nil : "تتطلب ربط الحساب"
+            )
+            StatCard(
+                title: current.hasViewData ? "متوسط المشاهدات" : "متوسط الإعجابات",
+                value: Num.compact(current.hasViewData ? current.avgViewsPerPost : current.avgLikesPerPost),
+                icon: "chart.bar.fill",
+                tint: Theme.pink
+            )
             StatCard(title: "المتابعون", value: Num.compact(current.followers), icon: "person.3.fill", tint: Theme.gold)
         }
     }
 
     private var engagementRow: some View {
         HStack(spacing: 0) {
-            engagementItem(icon: "heart.fill", value: current.videoLikes, label: "إعجاب", tint: Theme.pink)
+            engagementItem(
+                icon: "heart.fill",
+                value: current.hasViewData ? current.videoLikes : current.likes,
+                label: "إعجاب",
+                tint: Theme.pink
+            )
             Rectangle().fill(Theme.borderSoft).frame(width: 1, height: 26)
-            engagementItem(icon: "bubble.right.fill", value: current.comments, label: "تعليق", tint: Theme.cyan)
-            Rectangle().fill(Theme.borderSoft).frame(width: 1, height: 26)
-            engagementItem(icon: "arrowshape.turn.up.right.fill", value: current.shares, label: "مشاركة", tint: Theme.violet)
-            Rectangle().fill(Theme.borderSoft).frame(width: 1, height: 26)
+            if current.hasViewData {
+                engagementItem(icon: "bubble.right.fill", value: current.comments, label: "تعليق", tint: Theme.cyan)
+                Rectangle().fill(Theme.borderSoft).frame(width: 1, height: 26)
+                engagementItem(icon: "arrowshape.turn.up.right.fill", value: current.shares, label: "مشاركة", tint: Theme.violet)
+                Rectangle().fill(Theme.borderSoft).frame(width: 1, height: 26)
+            } else {
+                engagementItem(icon: "square.stack.3d.up.fill", value: Int64(current.posts), label: "منشور", tint: Theme.cyan)
+                Rectangle().fill(Theme.borderSoft).frame(width: 1, height: 26)
+            }
             engagementItem(icon: "person.2.fill", value: current.followers, label: "متابع", tint: Theme.gold)
         }
         .padding(.vertical, 12)
@@ -238,20 +259,43 @@ struct AccountDetailView: View {
     }
 
     private var coverageCard: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            HStack {
-                Text("تغطية التحليل")
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundColor(Theme.text)
-                Spacer()
-                Text("\(Num.full(Int64(current.fetchedVideos))) من \(Num.full(Int64(current.posts))) منشوراً")
-                    .font(.system(size: 10.5, weight: .medium, design: .rounded))
-                    .foregroundColor(Theme.textSecondary)
+        Group {
+            if current.hasViewData {
+                VStack(alignment: .leading, spacing: 9) {
+                    HStack {
+                        Text("تغطية التحليل")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundColor(Theme.text)
+                        Spacer()
+                        Text("\(Num.full(Int64(current.fetchedVideos))) من \(Num.full(Int64(current.posts))) منشوراً")
+                            .font(.system(size: 10.5, weight: .medium, design: .rounded))
+                            .foregroundColor(Theme.textSecondary)
+                    }
+                    ProgressBarLine(value: min(current.coverage, 1), gradient: Theme.violetGradient, height: 6)
+                    Text("آخر مزامنة: \(Dates.relative(current.lastSyncedAt))")
+                        .font(.system(size: 10))
+                        .foregroundColor(Theme.textTertiary)
+                }
+            } else {
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: "info.circle.fill")
+                        .font(.system(size: 14))
+                        .foregroundColor(Theme.cyan)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("المشاهدات تحتاج ربط الحساب")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundColor(Theme.text)
+                        Text("نعرض الآن المنشورات والمتابعين والإعجابات من البيانات العامة. أما مشاهدات الفيديو فيعطيها TikTok Display API بعد ربط الحساب مرة واحدة.")
+                            .font(.system(size: 10.5))
+                            .foregroundColor(Theme.textSecondary)
+                            .lineSpacing(3)
+                        Text("آخر تحديث: \(Dates.relative(current.lastSyncedAt))")
+                            .font(.system(size: 10))
+                            .foregroundColor(Theme.textTertiary)
+                    }
+                    Spacer(minLength: 0)
+                }
             }
-            ProgressBarLine(value: min(current.coverage, 1), gradient: Theme.violetGradient, height: 6)
-            Text("آخر مزامنة: \(Dates.relative(current.lastSyncedAt))")
-                .font(.system(size: 10))
-                .foregroundColor(Theme.textTertiary)
         }
         .card(padding: 15)
     }
@@ -293,7 +337,9 @@ struct AccountDetailView: View {
                 EmptyStateView(
                     icon: "video.slash",
                     title: "لا توجد منشورات",
-                    message: current.connected ? "لم يُرجع TikTok أي منشور عام لهذا الحساب." : "اربط الحساب لجلب المنشورات."
+                    message: current.connected
+                        ? "لم يُرجع TikTok أي منشور عام لهذا الحساب."
+                        : "المنشورات الفردية تظهر بعد ربط الحساب. الأرقام العامة (المنشورات والمتابعون والإعجابات) محدّثة أعلاه."
                 )
                 .card(padding: 4)
             } else {

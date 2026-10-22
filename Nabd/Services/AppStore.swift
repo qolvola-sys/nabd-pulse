@@ -5,6 +5,7 @@ import UIKit
 enum DataSource: Equatable {
     case demo
     case live
+    case direct
     case cache
     case empty
 
@@ -12,6 +13,7 @@ enum DataSource: Equatable {
         switch self {
         case .demo: return "بيانات تجريبية"
         case .live: return "متصل بالخادم"
+        case .direct: return "بيانات TikTok حقيقية"
         case .cache: return "آخر نسخة محفوظة"
         case .empty: return "لا توجد بيانات"
         }
@@ -64,6 +66,12 @@ final class AppStore: ObservableObject {
             if demoMode != oldValue { applyModeChange() }
         }
     }
+    @Published var useServer: Bool {
+        didSet {
+            UserDefaults.standard.set(useServer, forKey: Keys.useServer)
+            if useServer != oldValue { applyModeChange() }
+        }
+    }
     @Published var autoSync: Bool {
         didSet { UserDefaults.standard.set(autoSync, forKey: Keys.autoSync) }
     }
@@ -72,12 +80,14 @@ final class AppStore: ObservableObject {
     }
 
     private let oauth = OAuthSession()
+    private let direct = DirectTikTokService.shared
     private var didBootstrap = false
     private var lastAutoRefresh: Date?
 
     private enum Keys {
         static let serverURL = "nabd.serverURL"
         static let demoMode = "nabd.demoMode"
+        static let useServer = "nabd.useServer"
         static let autoSync = "nabd.autoSync"
         static let haptics = "nabd.haptics"
         static let token = "nabd.apiToken"
@@ -86,7 +96,8 @@ final class AppStore: ObservableObject {
     init() {
         let defaults = UserDefaults.standard
         serverURL = defaults.string(forKey: Keys.serverURL) ?? ""
-        demoMode = defaults.object(forKey: Keys.demoMode) as? Bool ?? true
+        demoMode = defaults.object(forKey: Keys.demoMode) as? Bool ?? false
+        useServer = defaults.object(forKey: Keys.useServer) as? Bool ?? false
         autoSync = defaults.object(forKey: Keys.autoSync) as? Bool ?? true
         hapticsEnabled = defaults.object(forKey: Keys.haptics) as? Bool ?? true
         apiToken = Keychain.get(Keys.token)
@@ -95,11 +106,16 @@ final class AppStore: ObservableObject {
     // MARK: - اشتقاقات
 
     var client: APIClient? {
-        APIClient(baseURL: serverURL, token: apiToken)
+        guard useServer, !demoMode else { return nil }
+        return APIClient(baseURL: serverURL, token: apiToken)
     }
 
     var isDemo: Bool {
-        demoMode || client == nil
+        demoMode
+    }
+
+    var isDirect: Bool {
+        !demoMode && !useServer
     }
 
     var hasServer: Bool {
@@ -129,12 +145,15 @@ final class AppStore: ObservableObject {
         didBootstrap = true
         if isDemo {
             loadDemo()
-        } else {
+        } else if useServer {
             if let cached = loadCache() {
                 accounts = cached
                 summary = Summary.make(from: cached)
                 source = .cache
             }
+            Task { await refresh() }
+        } else {
+            loadDirectAccounts()
             Task { await refresh() }
         }
     }
@@ -154,7 +173,17 @@ final class AppStore: ObservableObject {
             accounts = []
             summary = .empty
             source = .empty
-            Task { await refresh() }
+            if useServer {
+                if let cached = loadCache() {
+                    accounts = cached
+                    summary = Summary.make(from: cached)
+                    source = .cache
+                }
+                Task { await refresh() }
+            } else {
+                loadDirectAccounts()
+                Task { await refresh() }
+            }
         }
         haptic(.selection)
     }
@@ -171,10 +200,15 @@ final class AppStore: ObservableObject {
     // MARK: - الشبكة
 
     func refresh(showSpinner: Bool = true) async {
-        guard let client else {
-            if accounts.isEmpty { loadDemo() }
-            return
+        guard !isDemo else { return }
+        if let client {
+            await refreshFromServer(client, showSpinner: showSpinner)
+        } else {
+            await refreshDirect(showSpinner: showSpinner)
         }
+    }
+
+    private func refreshFromServer(_ client: APIClient, showSpinner: Bool) async {
         if showSpinner && accounts.isEmpty { isLoading = true }
         defer { isLoading = false }
 
@@ -198,6 +232,43 @@ final class AppStore: ObservableObject {
         }
     }
 
+    private func refreshDirect(showSpinner: Bool = true) async {
+        guard !accounts.isEmpty else {
+            source = accounts.isEmpty ? .empty : .direct
+            return
+        }
+        if showSpinner { isLoading = accounts.isEmpty }
+        defer { isLoading = false }
+
+        var updated: [String: Account] = [:]
+        var lastError: String?
+        for account in accounts {
+            do {
+                let result = try await direct.fetch(
+                    handle: account.handle,
+                    knownPosts: account.posts,
+                    createdAt: account.createdAt
+                )
+                updated[account.id] = result.account
+            } catch {
+                var failed = account
+                failed.status = "error"
+                failed.error = error.localizedDescription
+                updated[account.id] = failed
+                lastError = error.localizedDescription
+            }
+            try? await Task.sleep(nanoseconds: 250_000_000)
+        }
+
+        accounts = accounts.map { updated[$0.id] ?? $0 }
+        summary = Summary.make(from: accounts)
+        source = .direct
+        errorMessage = lastError
+        lastRefreshed = Date()
+        lastAutoRefresh = Date()
+        saveDirectAccounts()
+    }
+
     func syncAll() async {
         guard !isSyncing else { return }
         isSyncing = true
@@ -212,8 +283,20 @@ final class AppStore: ObservableObject {
             return
         }
 
+        if isDirect {
+            await refreshDirect(showSpinner: false)
+            if let error = errorMessage {
+                showToast(error, .error)
+                haptic(.error)
+            } else {
+                showToast("تم تحديث \(accounts.count) حساباً من TikTok", .success)
+                haptic(.success)
+            }
+            return
+        }
+
         guard let client else {
-            showToast("أضف عنوان الخادم أولاً", .error)
+            showToast("اختر مصدر البيانات من الإعدادات", .error)
             return
         }
         do {
@@ -233,6 +316,28 @@ final class AppStore: ObservableObject {
             simulateDemoGrowth()
             showToast("تم تحديث @\(account.handle)", .success)
             haptic(.success)
+            return
+        }
+        if isDirect {
+            isSyncing = true
+            defer { isSyncing = false }
+            do {
+                let result = try await direct.fetch(
+                    handle: account.handle,
+                    knownPosts: account.posts,
+                    createdAt: account.createdAt
+                )
+                if let index = accounts.firstIndex(where: { $0.id == account.id }) {
+                    accounts[index] = result.account
+                    summary = Summary.make(from: accounts)
+                }
+                saveDirectAccounts()
+                showToast("تم تحديث @\(account.handle)", .success)
+                haptic(.success)
+            } catch {
+                showToast(error.localizedDescription, .error)
+                haptic(.error)
+            }
             return
         }
         guard let client else { return }
