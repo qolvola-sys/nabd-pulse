@@ -15,8 +15,11 @@ struct SettingsView: View {
         ScrollView(showsIndicators: false) {
             VStack(spacing: 16) {
                 header
-                connectionCard
-                if let report { reportBanner(report) }
+                sourceCard
+                if store.useServer {
+                    connectionCard
+                    if let report { reportBanner(report) }
+                }
                 modeCard
                 syncCard
                 dataCard
@@ -44,11 +47,99 @@ struct SettingsView: View {
             Text("الإعدادات")
                 .font(.system(size: 26, weight: .heavy, design: .rounded))
                 .foregroundColor(Theme.text)
-            Text("اربط خادمك وتحكّم في طريقة المزامنة")
+            Text("اختر مصدر البيانات وتحكّم في طريقة المزامنة")
                 .font(.system(size: 11.5))
                 .foregroundColor(Theme.textSecondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // MARK: - مصدر البيانات
+
+    private var sourceCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Label("مصدر البيانات", systemImage: "antenna.radiowaves.left.and.right")
+                    .font(.system(size: 12.5, weight: .bold))
+                    .foregroundColor(Theme.text)
+                Spacer()
+                Chip(
+                    text: store.demoMode ? "تجريبي" : (store.useServer ? "خادم خاص" : "TikTok مباشرة"),
+                    color: store.demoMode ? Theme.gold : (store.useServer ? Theme.cyan : Theme.green)
+                )
+            }
+
+            sourceOption(
+                icon: "play.rectangle.fill",
+                tint: Theme.pink,
+                title: "TikTok مباشرة",
+                subtitle: "إحصاءات عامة حقيقية بدون خادم أو تسجيل دخول — تشمل آخر ٢٤ ساعة.",
+                selected: !store.useServer
+            ) {
+                report = nil
+                store.useServer = false
+            }
+
+            sourceOption(
+                icon: "server.rack",
+                tint: Theme.cyan,
+                title: "خادم خاص",
+                subtitle: "مزامنة عبر TikTok Display API الرسمي بعد ربط الحسابات.",
+                selected: store.useServer
+            ) {
+                report = nil
+                store.useServer = true
+            }
+        }
+        .card(padding: 16)
+    }
+
+    private func sourceOption(
+        icon: String,
+        tint: Color,
+        title: String,
+        subtitle: String,
+        selected: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(alignment: .top, spacing: 11) {
+                Image(systemName: icon)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(tint)
+                    .frame(width: 34, height: 34)
+                    .background(Circle().fill(tint.opacity(0.12)))
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title)
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundColor(Theme.text)
+                    Text(subtitle)
+                        .font(.system(size: 10.5))
+                        .foregroundColor(Theme.textTertiary)
+                        .multilineTextAlignment(.leading)
+                        .lineSpacing(3)
+                }
+
+                Spacer(minLength: 6)
+
+                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 16))
+                    .foregroundColor(selected ? tint : Theme.textTertiary.opacity(0.45))
+                    .padding(.top, 2)
+            }
+            .padding(11)
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(selected ? tint.opacity(0.07) : Theme.bgSoft)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .strokeBorder(selected ? tint.opacity(0.3) : Theme.borderSoft, lineWidth: 1)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(PressableStyle(scale: 0.99))
     }
 
     // MARK: - الاتصال
@@ -176,10 +267,6 @@ struct SettingsView: View {
             Toggle(isOn: Binding(
                 get: { store.demoMode },
                 set: { newValue in
-                    if !newValue && !store.hasServer {
-                        store.showToast("احفظ عنوان الخادم أولاً", .error)
-                        return
-                    }
                     store.demoMode = newValue
                     report = nil
                 }
@@ -188,7 +275,7 @@ struct SettingsView: View {
                     Text("الوضع التجريبي")
                         .font(.system(size: 12.5, weight: .semibold))
                         .foregroundColor(Theme.text)
-                    Text("أرقام تمثيلية لـ \(DemoData.brands.count) حساباً لتجربة الواجهة.")
+                    Text("أرقام تمثيلية لـ \(DemoData.brands.count) حساباً لتجربة الواجهة فقط.")
                         .font(.system(size: 10.5))
                         .foregroundColor(Theme.textTertiary)
                 }
@@ -229,7 +316,7 @@ struct SettingsView: View {
                 settingsRow(
                     icon: "arrow.triangle.2.circlepath",
                     tint: Theme.cyan,
-                    title: store.isSyncing ? "جارٍ المزامنة…" : "مزامنة كل الحسابات",
+                    title: store.isSyncing ? "جارٍ المزامنة…" : "تحديث كل الحسابات",
                     subtitle: "آخر تحديث: \(Dates.relative(store.summary.lastSyncedAt))"
                 )
             }
@@ -245,8 +332,8 @@ struct SettingsView: View {
                 settingsRow(
                     icon: "arrow.clockwise",
                     tint: Theme.violet,
-                    title: "إعادة تحميل من الخادم",
-                    subtitle: "بدون طلب مزامنة جديد"
+                    title: store.useServer ? "إعادة تحميل من الخادم" : "تحديث من TikTok",
+                    subtitle: store.useServer ? "بدون طلب مزامنة جديد" : "إعادة قراءة الصفحات العامة"
                 )
             }
             .buttonStyle(PressableStyle(scale: 0.99))
@@ -295,7 +382,7 @@ struct SettingsView: View {
                     icon: "trash",
                     tint: Theme.red,
                     title: "مسح النسخة المحفوظة",
-                    subtitle: "يبقى الخادم كما هو"
+                    subtitle: store.useServer ? "نسخة الخادم على الجهاز فقط" : "لا يحذف الحسابات المضافة"
                 )
             }
             .buttonStyle(PressableStyle(scale: 0.99))
@@ -356,10 +443,15 @@ struct SettingsView: View {
 
             HairlineDivider()
 
-            Text("يعمل نبض عبر TikTok Display API الرسمي: كل حساب يُربط بموافقتك مرة واحدة، ولا نطلب كلمة المرور أبداً. تُخزَّن التوكنات مشفّرة على خادمك الخاص.")
+            Text("يعمل نبض بطريقتين: قراءة الإحصاءات العامة من TikTok مباشرة بدون خادم أو تسجيل دخول، أو عبر TikTok Display API الرسمي عند ربط خادمك الخاص. لا نطلب كلمة المرور أبداً.")
                 .font(.system(size: 10.5))
                 .foregroundColor(Theme.textTertiary)
                 .lineSpacing(4)
+
+            Text("آخر ٢٤ ساعة = المنشورات التي نُشرت خلال ٢٤ ساعة الماضية ومجموع مشاهداتها من البيانات العامة. قد تكون الأرقام مقرّبة، وقد تنقص إذا نشر الحساب أكثر من عشرة منشورات في اليوم.")
+                .font(.system(size: 9.5))
+                .foregroundColor(Theme.textTertiary.opacity(0.85))
+                .lineSpacing(3)
 
             Link(destination: URL(string: "https://developers.tiktok.com/")!) {
                 HStack(spacing: 5) {
@@ -397,6 +489,7 @@ struct SettingsView: View {
         store.serverURL = url.trimmingCharacters(in: .whitespacesAndNewlines)
         store.apiToken = token.trimmingCharacters(in: .whitespacesAndNewlines)
         store.demoMode = false
+        store.useServer = true
         hideKeyboard()
         await store.refresh()
         if store.source == .live {
@@ -412,7 +505,7 @@ struct SettingsView: View {
             store.showToast("لا توجد حسابات للتصدير", .info)
             return
         }
-        let header = ["المنصة", "الحساب", "الاسم", "الرابط", "المنشورات", "المشاهدات", "متوسط المشاهدات", "الإعجابات", "التعليقات", "المشاركات", "المتابعون", "آخر مزامنة"]
+        let header = ["المنصة", "الحساب", "الاسم", "الرابط", "المنشورات", "منشورات ٢٤س", "مشاهدات ٢٤س", "المشاهدات", "متوسط المشاهدات", "الإعجابات", "التعليقات", "المشاركات", "المتابعون", "آخر مزامنة"]
         let quote: (String) -> String = { value in
             "\"" + value.replacingOccurrences(of: "\"", with: "\"\"") + "\""
         }
@@ -424,6 +517,8 @@ struct SettingsView: View {
                 account.displayName,
                 account.url,
                 String(account.posts),
+                String(account.posts24h),
+                String(account.views24h),
                 String(account.views),
                 String(account.avgViewsPerPost),
                 String(account.videoLikes),

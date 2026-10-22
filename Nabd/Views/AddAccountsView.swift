@@ -85,7 +85,7 @@ struct AddAccountsView: View {
             Image(systemName: "flask.fill")
                 .font(.system(size: 12))
                 .foregroundColor(Theme.gold)
-            Text("أنت في الوضع التجريبي. الإضافة الحقيقية تحتاج خادماً مربوطاً بـ TikTok API — أوقف الوضع التجريبي من الإعدادات.")
+            Text("أنت في الوضع التجريبي. أوقف الوضع التجريبي من الإعدادات لإضافة حسابات حقيقية وعرض إحصاءات آخر ٢٤ ساعة.")
                 .font(.system(size: 11))
                 .foregroundColor(Theme.textSecondary)
                 .lineSpacing(3)
@@ -199,21 +199,24 @@ struct AddAccountsView: View {
     }
 
     private func resultCard(_ result: AddAccountsResponse) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        let successCount = result.created.filter { $0.status != "error" }.count
+        return VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundColor(Theme.green)
-                Text("تمت الإضافة")
+                Image(systemName: successCount > 0 ? "checkmark.circle.fill" : "xmark.octagon.fill")
+                    .foregroundColor(successCount > 0 ? Theme.green : Theme.red)
+                Text(successCount > 0 ? "تمت الإضافة" : "تعذّرت الإضافة")
                     .font(.system(size: 13, weight: .bold))
                     .foregroundColor(Theme.text)
                 Spacer()
-                Text("\(result.created.count) جديد")
+                Text("\(successCount) جديد")
                     .font(.system(size: 10.5, weight: .bold))
-                    .foregroundColor(Theme.green)
+                    .foregroundColor(successCount > 0 ? Theme.green : Theme.red)
             }
 
             if !result.created.isEmpty {
-                Text("الخطوة التالية: اربط كل حساب بتسجيل الدخول إلى TikTok مرة واحدة.")
+                Text(store.useServer
+                     ? "الخطوة التالية: اربط كل حساب بتسجيل الدخول إلى TikTok مرة واحدة."
+                     : "تم جلب المنشورات ومشاهدات آخر ٢٤ ساعة مباشرة من TikTok.")
                     .font(.system(size: 11))
                     .foregroundColor(Theme.textSecondary)
                     .lineSpacing(3)
@@ -232,17 +235,28 @@ struct AddAccountsView: View {
                                     .foregroundColor(Theme.textTertiary)
                             }
                             Spacer()
-                            Button {
-                                Task { await store.connect(account) }
-                            } label: {
-                                Text(store.connectingAccountID == account.id ? "…" : "ربط")
-                                    .font(.system(size: 10.5, weight: .bold))
-                                    .foregroundColor(Color(hex: 0x061016))
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 6)
-                                    .background(Capsule().fill(Theme.cyan))
+                            if store.useServer {
+                                Button {
+                                    Task { await store.connect(account) }
+                                } label: {
+                                    Text(store.connectingAccountID == account.id ? "…" : "ربط")
+                                        .font(.system(size: 10.5, weight: .bold))
+                                        .foregroundColor(Color(hex: 0x061016))
+                                        .padding(.horizontal, 12)
+                                        .padding(.vertical, 6)
+                                        .background(Capsule().fill(Theme.cyan))
+                                }
+                                .disabled(store.connectingAccountID != nil)
+                            } else {
+                                VStack(alignment: .trailing, spacing: 1) {
+                                    Text("\(Num.compact(account.views24h)) مشاهدة")
+                                        .font(.system(size: 10.5, weight: .bold, design: .rounded))
+                                        .foregroundColor(account.status == "error" ? Theme.red : Theme.cyan)
+                                    Text("\(account.posts24h) منشور ٢٤س")
+                                        .font(.system(size: 8.5))
+                                        .foregroundColor(Theme.textTertiary)
+                                }
                             }
-                            .disabled(store.connectingAccountID != nil)
                         }
                         .padding(8)
                         .background(RoundedRectangle(cornerRadius: 11).fill(Theme.bgSoft))
@@ -300,10 +314,12 @@ struct AddAccountsView: View {
 
     private var helpCard: some View {
         VStack(alignment: .leading, spacing: 9) {
-            Label("كيف يعمل الربط؟", systemImage: "questionmark.circle")
+            Label(store.useServer ? "كيف يعمل الربط؟" : "كيف تُحسب الإحصاءات؟", systemImage: "questionmark.circle")
                 .font(.system(size: 11.5, weight: .bold))
                 .foregroundColor(Theme.textSecondary)
-            Text("TikTok لا يسمح بقراءة إحصاءات حساب دون إذن صاحبه. لذلك نسجّل دخول كل حساب مرة واحدة عبر TikTok API الرسمي، ثم يبقى مربوطاً ويُحدّث نفسه تلقائياً.")
+            Text(store.useServer
+                 ? "نسجّل دخول كل حساب مرة واحدة عبر TikTok Display API الرسمي، ثم يبقى مربوطاً ويُحدّث نفسه تلقائياً. لا نطلب كلمة المرور."
+                 : "نقرأ الصفحة العامة لكل حساب على TikTok لعدد المنشورات والمتابعين والإعجابات، ثم صفحة المنشورات لإجمالي مشاهدات ما نُشر خلال آخر ٢٤ ساعة. لا حاجة لتسجيل الدخول، والأرقام العامة قد تكون مقرّبة.")
                 .font(.system(size: 11))
                 .foregroundColor(Theme.textTertiary)
                 .lineSpacing(4)
@@ -325,7 +341,9 @@ struct AddAccountsView: View {
                 text = ""
             }
         } else {
-            errorText = "لم نستطع إضافة الحسابات. تأكد من اتصال الخادم ثم أعد المحاولة."
+            errorText = store.useServer
+                ? "لم نستطع إضافة الحسابات. تأكد من اتصال الخادم ثم أعد المحاولة."
+                : "تعذّر جلب البيانات من TikTok. تحقق من الرابط واتصالك بالإنترنت ثم أعد المحاولة."
         }
     }
 

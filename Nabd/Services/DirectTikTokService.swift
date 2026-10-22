@@ -37,6 +37,7 @@ final class DirectTikTokService {
         "(KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"
     private let daySeconds = 24 * 60 * 60
     private var warmedCookies = false
+    private var lastRequestAt = Date.distantPast
 
     private init() {}
 
@@ -165,6 +166,11 @@ final class DirectTikTokService {
 
     private func loadHTML(_ urlString: String, allowFailure: Bool = false) async throws -> String {
         guard let url = URL(string: urlString) else { throw DirectTikTokError.invalidHandle }
+        let elapsed = Date().timeIntervalSince(lastRequestAt)
+        if elapsed < 0.65 {
+            try? await Task.sleep(nanoseconds: UInt64((0.65 - elapsed) * 1_000_000_000))
+        }
+        lastRequestAt = Date()
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 30)
         request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
         request.setValue("en-US,en;q=0.9", forHTTPHeaderField: "Accept-Language")

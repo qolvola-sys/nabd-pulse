@@ -27,7 +27,8 @@ struct AccountDetailView: View {
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 18) {
                     profileHeader
-                    if !current.connected {
+                    last24hCard
+                    if !current.connected && !current.publicStats {
                         connectCard
                     }
                     statsGrid
@@ -157,6 +158,67 @@ struct AccountDetailView: View {
         .frame(maxWidth: .infinity)
     }
 
+    // MARK: - آخر ٢٤ ساعة
+
+    private var last24hCard: some View {
+        VStack(alignment: .leading, spacing: 13) {
+            HStack(spacing: 7) {
+                Image(systemName: "clock.badge.checkmark.fill")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundColor(Theme.cyan)
+                Text("إحصاءات آخر ٢٤ ساعة")
+                    .font(.system(size: 12.5, weight: .bold))
+                    .foregroundColor(Theme.text)
+                Spacer()
+                Text("الآن")
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .foregroundColor(Theme.cyan)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(Theme.cyan.opacity(0.12)))
+            }
+
+            HStack(spacing: 0) {
+                detailMetric(
+                    value: Num.full(Int64(current.posts24h)),
+                    label: "منشور جديد",
+                    icon: "square.stack.3d.up.fill",
+                    tint: Theme.cyan
+                )
+                Rectangle().fill(Theme.borderSoft).frame(width: 1, height: 34)
+                detailMetric(
+                    value: Num.full(current.views24h),
+                    label: "مشاهدة",
+                    icon: "play.fill",
+                    tint: Theme.violet
+                )
+            }
+
+            Text("المشاهدات هي مجموع مشاهدات المنشورات التي نُشرت خلال آخر ٢٤ ساعة، من البيانات العامة على TikTok.")
+                .font(.system(size: 9.5))
+                .foregroundColor(Theme.textTertiary)
+                .lineSpacing(3)
+        }
+        .card(padding: 15)
+    }
+
+    private func detailMetric(value: String, label: String, icon: String, tint: Color) -> some View {
+        VStack(spacing: 4) {
+            Image(systemName: icon)
+                .font(.system(size: 11))
+                .foregroundColor(tint)
+            Text(value)
+                .font(.system(size: 18, weight: .heavy, design: .rounded))
+                .foregroundColor(Theme.text)
+                .lineLimit(1)
+                .minimumScaleFactor(0.65)
+            Text(label)
+                .font(.system(size: 9.5))
+                .foregroundColor(Theme.textTertiary)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
     private var connectCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 9) {
@@ -204,7 +266,7 @@ struct AccountDetailView: View {
                 value: current.hasViewData ? Num.compact(current.views) : "—",
                 icon: "play.fill",
                 tint: Theme.violet,
-                hint: current.hasViewData ? nil : "تتطلب ربط الحساب"
+                hint: current.hasViewData ? "من المنشورات العامة" : "لا توجد بيانات عامة"
             )
             StatCard(
                 title: current.hasViewData ? "متوسط المشاهدات" : "متوسط الإعجابات",
@@ -282,10 +344,10 @@ struct AccountDetailView: View {
                         .font(.system(size: 14))
                         .foregroundColor(Theme.cyan)
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("المشاهدات تحتاج ربط الحساب")
+                        Text("لا توجد مشاهدات عامة متاحة")
                             .font(.system(size: 12, weight: .bold))
                             .foregroundColor(Theme.text)
-                        Text("نعرض الآن المنشورات والمتابعين والإعجابات من البيانات العامة. أما مشاهدات الفيديو فيعطيها TikTok Display API بعد ربط الحساب مرة واحدة.")
+                        Text("قد يكون الحساب بلا منشورات عامة، أو أن TikTok لم يُرجع المشاهدات الآن. عدد المنشورات والمتابعون محدّثون من البيانات العامة.")
                             .font(.system(size: 10.5))
                             .foregroundColor(Theme.textSecondary)
                             .lineSpacing(3)
@@ -337,9 +399,11 @@ struct AccountDetailView: View {
                 EmptyStateView(
                     icon: "video.slash",
                     title: "لا توجد منشورات",
-                    message: current.connected
-                        ? "لم يُرجع TikTok أي منشور عام لهذا الحساب."
-                        : "المنشورات الفردية تظهر بعد ربط الحساب. الأرقام العامة (المنشورات والمتابعون والإعجابات) محدّثة أعلاه."
+                    message: current.publicStats
+                        ? "لم يُرجع TikTok منشورات عامة لهذا الحساب الآن."
+                        : (current.connected
+                           ? "لم يُرجع TikTok أي منشور عام لهذا الحساب."
+                           : "المنشورات الفردية تظهر بعد ربط الحساب.")
                 )
                 .card(padding: 4)
             } else {
@@ -482,7 +546,9 @@ struct VideoRow: View {
                     .multilineTextAlignment(.leading)
                 HStack(spacing: 8) {
                     Label(Num.compact(video.views), systemImage: "play.fill")
-                    Label(Num.compact(video.likes), systemImage: "heart.fill")
+                    if video.likes > 0 {
+                        Label(Num.compact(video.likes), systemImage: "heart.fill")
+                    }
                     Text(Dates.videoDate(video.createTime))
                 }
                 .font(.system(size: 9.5, weight: .medium, design: .rounded))

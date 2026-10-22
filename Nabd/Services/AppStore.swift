@@ -81,6 +81,7 @@ final class AppStore: ObservableObject {
 
     private let oauth = OAuthSession()
     private let direct = DirectTikTokService.shared
+    private var directVideos: [String: [VideoItem]] = [:]
     private var didBootstrap = false
     private var lastAutoRefresh: Date?
 
@@ -250,6 +251,7 @@ final class AppStore: ObservableObject {
                     createdAt: account.createdAt
                 )
                 updated[account.id] = result.account
+                directVideos[account.handle] = result.videos
             } catch {
                 var failed = account
                 failed.status = "error"
@@ -331,6 +333,7 @@ final class AppStore: ObservableObject {
                     accounts[index] = result.account
                     summary = Summary.make(from: accounts)
                 }
+                directVideos[account.handle] = result.videos
                 saveDirectAccounts()
                 showToast("تم تحديث @\(account.handle)", .success)
                 haptic(.success)
@@ -359,8 +362,15 @@ final class AppStore: ObservableObject {
     }
 
     func add(links: [String]) async -> AddAccountsResponse? {
-        guard !isDemo, let client else {
-            showToast("الإضافة تحتاج الاتصال بالخادم — أوقف الوضع التجريبي أولاً", .info)
+        guard !isDemo else {
+            showToast("أوقف الوضع التجريبي أولاً", .info)
+            return nil
+        }
+        if isDirect {
+            return await addDirect(links: links)
+        }
+        guard let client else {
+            showToast("اختر مصدر البيانات من الإعدادات", .info)
             return nil
         }
         isAdding = true
@@ -377,10 +387,121 @@ final class AppStore: ObservableObject {
         }
     }
 
+    private func addDirect(links: [String]) async -> AddAccountsResponse? {
+        isAdding = true
+        defer { isAdding = false }
+
+        var created: [Account] = []
+        var skipped: [SkippedAccount] = []
+        var invalid: [String] = []
+
+        for raw in links {
+            guard let handle = Self.handle(from: raw) else {
+                invalid.append(raw)
+                continue
+            }
+            if accounts.contains(where: { $0.handle.lowercased() == handle }) {
+                skipped.append(SkippedAccount(handle: handle, reason: "duplicate"))
+                continue
+            }
+
+            let placeholder = Account(
+                id: "direct-\(handle)",
+                handle: handle,
+                displayName: "@\(handle)",
+                url: "https://www.tiktok.com/@\(handle)",
+                status: "pending",
+                createdAt: ISO8601DateFormatter.nabd.string(from: Date())
+            )
+            accounts.append(placeholder)
+            accounts.sort { $0.displayName.localizedCompare($1.displayName) == .orderedAscending }
+
+            do {
+                let result = try await direct.fetch(handle: handle)
+                if let index = accounts.firstIndex(where: { $0.handle == handle }) {
+                    accounts[index] = result.account
+                }
+                directVideos[handle] = result.videos
+                created.append(result.account)
+            } catch {
+                if let index = accounts.firstIndex(where: { $0.handle == handle }) {
+                    accounts[index].status = "error"
+                    accounts[index].error = error.localizedDescription
+                }
+                var failed = placeholder
+                failed.status = "error"
+                failed.error = error.localizedDescription
+                created.append(failed)
+            }
+            try? await Task.sleep(nanoseconds: 250_000_000)
+        }
+
+        summary = Summary.make(from: accounts)
+        source = .direct
+        lastRefreshed = Date()
+        saveDirectAccounts()
+
+        if !created.contains(where: { $0.status != "error" }) && created.contains(where: { $0.status == "error" }) {
+            showToast(created.first?.error ?? "تعذّر جلب بيانات الحساب", .error)
+            haptic(.error)
+        } else {
+            showToast("تمت إضافة \(created.filter { $0.status != "error" }.count) حساب", .success)
+            haptic(.success)
+        }
+
+        return AddAccountsResponse(
+            created: created,
+            skipped: skipped,
+            invalid: invalid,
+            accounts: accounts
+        )
+    }
+
+    static func handle(from raw: String) -> String? {
+        var value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return nil }
+        value = value.replacingOccurrences(of: "https://", with: "")
+        value = value.replacingOccurrences(of: "http://", with: "")
+        value = value.replacingOccurrences(of: "www.", with: "")
+        if value.lowercased().hasPrefix("tiktok.com/") {
+            value = String(value.dropFirst("tiktok.com/".count))
+        }
+        value = value.components(separatedBy: CharacterSet(charactersIn: "?#")).first ?? value
+        while value.hasSuffix("/") { value.removeLast() }
+        value = value.replacingOccurrences(of: "@", with: "")
+
+        if value.range(of: #"^[A-Za-z0-9._]{2,24}$"#, options: .regularExpression) != nil,
+           !value.lowercased().hasSuffix(".com") {
+            return value.lowercased()
+        }
+        if let range = raw.range(of: #"@([A-Za-z0-9._]{2,24})"#, options: .regularExpression) {
+            return String(raw[range]).replacingOccurrences(of: "@", with: "").lowercased()
+        }
+        return nil
+    }
+
     func detail(for account: Account, limit: Int = 40) async throws -> (Account, [VideoItem]) {
         if isDemo {
             try? await Task.sleep(nanoseconds: 250_000_000)
             return (account, DemoData.videos(for: account, limit: min(limit, 30)))
+        }
+        if isDirect {
+            if let cached = directVideos[account.handle], !cached.isEmpty {
+                let current = accounts.first(where: { $0.id == account.id }) ?? account
+                return (current, Array(cached.prefix(limit)))
+            }
+            let result = try await direct.fetch(
+                handle: account.handle,
+                knownPosts: account.posts,
+                createdAt: account.createdAt
+            )
+            directVideos[account.handle] = result.videos
+            saveDirectAccounts()
+            if let index = accounts.firstIndex(where: { $0.id == account.id }) {
+                accounts[index] = result.account
+                summary = Summary.make(from: accounts)
+            }
+            return (result.account, Array(result.videos.prefix(limit)))
         }
         guard let client else { throw APIError.missingCredentials }
         let response: AccountDetailResponse = try await client.get("/api/accounts/\(account.id)?limit=\(limit)")
@@ -391,6 +512,15 @@ final class AppStore: ObservableObject {
         if isDemo {
             accounts.removeAll { $0.id == account.id }
             summary = Summary.make(from: accounts)
+            haptic(.success)
+            return
+        }
+        if isDirect {
+            accounts.removeAll { $0.id == account.id }
+            directVideos.removeValue(forKey: account.handle)
+            summary = Summary.make(from: accounts)
+            saveDirectAccounts()
+            showToast("تم حذف @\(account.handle)", .success)
             haptic(.success)
             return
         }
@@ -424,6 +554,10 @@ final class AppStore: ObservableObject {
     }
 
     func connect(_ account: Account) async {
+        if isDirect {
+            showToast("الإحصاءات تُقرأ مباشرة من TikTok — لا حاجة لتسجيل الدخول", .info)
+            return
+        }
         guard !isDemo else {
             showToast("الربط متاح بعد الاتصال بالخادم", .info)
             return
@@ -506,6 +640,49 @@ final class AppStore: ObservableObject {
     private func loadCache() -> [Account]? {
         guard let cacheURL, let data = try? Data(contentsOf: cacheURL) else { return nil }
         return try? JSONDecoder().decode(CacheFile.self, from: data).accounts
+    }
+
+    // MARK: - التخزين المحلي للوضع المباشر
+
+    private struct DirectCacheFile: Codable {
+        var savedAt: String
+        var accounts: [Account]
+        var videos: [String: [VideoItem]]
+    }
+
+    private var directCacheURL: URL? {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("nabd-direct.json")
+    }
+
+    private func saveDirectAccounts() {
+        guard !isDemo, !useServer, let directCacheURL else { return }
+        let payload = DirectCacheFile(
+            savedAt: ISO8601DateFormatter.nabd.string(from: Date()),
+            accounts: accounts,
+            videos: directVideos
+        )
+        do {
+            let data = try JSONEncoder().encode(payload)
+            try data.write(to: directCacheURL, options: .atomic)
+        } catch {
+            // التخزين المحلي ليس حرجاً
+        }
+    }
+
+    private func loadDirectAccounts() {
+        guard let directCacheURL, let data = try? Data(contentsOf: directCacheURL),
+              let payload = try? JSONDecoder().decode(DirectCacheFile.self, from: data) else {
+            accounts = []
+            summary = .empty
+            source = .empty
+            return
+        }
+        accounts = payload.accounts
+        directVideos = payload.videos
+        summary = Summary.make(from: accounts)
+        source = .direct
+        lastRefreshed = Dates.parse(payload.savedAt)
     }
 
     func clearCache() {

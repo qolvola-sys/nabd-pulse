@@ -2,14 +2,16 @@ import SwiftUI
 import UIKit
 
 enum AccountSort: String, CaseIterable, Identifiable {
-    case views, posts, followers, name, recent
+    case views24h, posts24h, views, posts, followers, name, recent
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
-        case .views: return "الأكثر مشاهدة"
-        case .posts: return "الأكثر منشورات"
+        case .views24h: return "الأكثر مشاهدة ٢٤س"
+        case .posts24h: return "الأكثر نشراً ٢٤س"
+        case .views: return "إجمالي المشاهدات"
+        case .posts: return "إجمالي المنشورات"
         case .followers: return "الأكثر متابعة"
         case .name: return "أبجدي"
         case .recent: return "الأحدث تحديثاً"
@@ -21,7 +23,7 @@ struct AccountsView: View {
     @EnvironmentObject private var store: AppStore
 
     @State private var search = ""
-    @State private var sort: AccountSort = .views
+    @State private var sort: AccountSort = .views24h
     @State private var selected: Account?
     @State private var showAdd = false
     @State private var pendingDelete: Account?
@@ -36,6 +38,8 @@ struct AccountsView: View {
             }
         }
         switch sort {
+        case .views24h: list.sort { $0.views24h > $1.views24h }
+        case .posts24h: list.sort { $0.posts24h > $1.posts24h }
         case .views: list.sort { $0.views > $1.views }
         case .posts: list.sort { $0.posts > $1.posts }
         case .followers: list.sort { $0.followers > $1.followers }
@@ -137,9 +141,7 @@ struct AccountsView: View {
     }
 
     private var maxViews: Int64 {
-        let useViews = store.accounts.contains { $0.hasViewData }
-        let values = store.accounts.map { useViews ? $0.views : $0.likes }
-        return max(values.max() ?? 1, 1)
+        max(store.accounts.map { $0.views24h }.max() ?? 1, 1)
     }
 
     private var header: some View {
@@ -148,7 +150,7 @@ struct AccountsView: View {
                 Text("الحسابات")
                     .font(.system(size: 26, weight: .heavy, design: .rounded))
                     .foregroundColor(Theme.text)
-                Text("\(store.accounts.count) حساباً مرتبطاً بنبض")
+                Text("\(store.accounts.count) حساباً في نبض")
                     .font(.system(size: 11.5))
                     .foregroundColor(Theme.textSecondary)
             }
@@ -174,17 +176,12 @@ struct AccountsView: View {
     }
 
     private var summaryStrip: some View {
-        let hasViews = store.summary.views > 0
-        return HStack(spacing: 0) {
-            stripItem(title: "المنشورات", value: Num.compact(Int64(store.summary.posts)), tint: Theme.cyan)
+        HStack(spacing: 0) {
+            stripItem(title: "منشورات ٢٤س", value: Num.compact(Int64(store.summary.posts24h)), tint: Theme.cyan)
             Rectangle().fill(Theme.borderSoft).frame(width: 1, height: 24)
-            stripItem(
-                title: hasViews ? "المشاهدات" : "الإعجابات",
-                value: Num.compact(hasViews ? store.summary.views : store.summary.likes),
-                tint: Theme.violet
-            )
+            stripItem(title: "مشاهدات ٢٤س", value: Num.compact(store.summary.views24h), tint: Theme.violet)
             Rectangle().fill(Theme.borderSoft).frame(width: 1, height: 24)
-            stripItem(title: "المتصل", value: "\(store.connectedCount)/\(store.accounts.count)", tint: Theme.green)
+            stripItem(title: "الحسابات", value: "\(store.accounts.count)", tint: Theme.green)
         }
         .padding(.vertical, 12)
         .background(
@@ -316,21 +313,18 @@ struct AccountRow: View {
                 Spacer(minLength: 6)
 
                 VStack(alignment: .trailing, spacing: 2) {
-                    Text(Num.compact(account.hasViewData ? account.views : account.likes))
+                    Text(Num.compact(account.views24h))
                         .font(.system(size: 15, weight: .bold, design: .rounded))
                         .foregroundColor(Theme.text)
-                    Text(account.hasViewData ? "مشاهدة" : "إعجاب")
+                    Text("مشاهدة ٢٤س")
                         .font(.system(size: 9.5))
                         .foregroundColor(Theme.textTertiary)
                 }
             }
 
             HStack(alignment: .center, spacing: 10) {
-                statColumn(value: Num.full(Int64(account.posts)), label: "منشور")
-                statColumn(
-                    value: Num.compact(account.hasViewData ? account.avgViewsPerPost : account.avgLikesPerPost),
-                    label: "متوسط"
-                )
+                statColumn(value: Num.full(Int64(account.posts24h)), label: "منشور ٢٤س")
+                statColumn(value: Num.compact(account.views24h), label: "مشاهدات ٢٤س")
                 statColumn(value: Num.compact(account.followers), label: "متابع")
 
                 Spacer(minLength: 2)
@@ -340,7 +334,7 @@ struct AccountRow: View {
             }
 
             ProgressBarLine(
-                value: Double(account.hasViewData ? account.views : account.likes) / Double(max(maxViews, 1)),
+                value: Double(account.views24h) / Double(max(maxViews, 1)),
                 gradient: LinearGradient(colors: [palette.opacity(0.9), palette.opacity(0.4)], startPoint: .leading, endPoint: .trailing),
                 height: 3
             )
@@ -366,12 +360,12 @@ struct AccountRow: View {
     private var statusChip: some View {
         if account.status == "needs_reconnect" {
             Chip(text: "أعد الربط", color: Theme.red, icon: "exclamationmark.triangle.fill")
+        } else if account.status == "error" {
+            Chip(text: "تعذّر التحديث", color: Theme.red, icon: "exclamationmark.triangle.fill")
         } else if account.status == "public" {
             Chip(text: "بيانات عامة", color: Theme.cyan, icon: "globe")
         } else if !account.connected {
             Chip(text: "غير مربوط", color: Theme.gold, icon: "link.badge.plus")
-        } else if account.status == "error" {
-            Chip(text: "خطأ", color: Theme.red)
         } else if account.coverage < 0.95 && account.coverage > 0 {
             Chip(text: "جزئي", color: Theme.violet, icon: "chart.pie.fill")
         }

@@ -40,6 +40,7 @@ struct DashboardView: View {
                 }
 
                 heroCard
+                last24hCard
                 statsGrid
 
                 if !store.needsReconnect.isEmpty {
@@ -112,6 +113,7 @@ struct DashboardView: View {
     private var statusColor: Color {
         switch store.source {
         case .live: return Theme.green
+        case .direct: return Theme.cyan
         case .demo: return Theme.gold
         case .cache: return Theme.violet
         case .empty: return Theme.red
@@ -131,13 +133,13 @@ struct DashboardView: View {
                 Text("وضع العرض التجريبي")
                     .font(.system(size: 12.5, weight: .bold))
                     .foregroundColor(Theme.text)
-                Text("الأرقام تمثيلية لـ \(DemoData.brands.count) حساباً. اربط الخادم لعرض بياناتك الحقيقية.")
+                Text("الأرقام تمثيلية لـ \(DemoData.brands.count) حساباً. أوقف الوضع التجريبي وأضف روابطك لعرض البيانات الحقيقية.")
                     .font(.system(size: 11))
                     .foregroundColor(Theme.textSecondary)
                     .lineSpacing(3)
             }
             Spacer(minLength: 0)
-            Button("ربط") { onOpenSettings() }
+            Button("إعدادات") { onOpenSettings() }
                 .font(.system(size: 11, weight: .bold))
                 .foregroundColor(Color(hex: 0x061016))
                 .padding(.horizontal, 12)
@@ -218,11 +220,11 @@ struct DashboardView: View {
                     .clipped()
 
                 HStack(spacing: 0) {
-                    heroStat(value: Num.compact(Int64(store.summary.posts)), caption: "منشور")
+                    heroStat(value: Num.compact(Int64(store.summary.posts24h)), caption: "منشور ٢٤ س")
+                    divider
+                    heroStat(value: Num.compact(store.summary.views24h), caption: "مشاهدة ٢٤ س")
                     divider
                     heroStat(value: Num.compact(Int64(store.summary.accounts)), caption: "حساب")
-                    divider
-                    heroStat(value: Num.compact(store.totalFollowers), caption: "متابع")
                 }
                 .padding(.top, 6)
             }
@@ -260,6 +262,123 @@ struct DashboardView: View {
                 .foregroundColor(Theme.textTertiary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // MARK: - آخر ٢٤ ساعة
+
+    private var accounts24h: [Account] {
+        store.accounts
+            .filter { $0.posts24h > 0 || $0.views24h > 0 }
+            .sorted { $0.views24h > $1.views24h }
+    }
+
+    private var last24hCard: some View {
+        VStack(spacing: 13) {
+            SectionHeader(
+                title: "آخر ٢٤ ساعة",
+                subtitle: "عدد المنشورات ومشاهداتها لكل منصة",
+                actionTitle: "كل الحسابات",
+                action: { onOpenAccounts() }
+            )
+
+            HStack(spacing: 10) {
+                miniMetric(
+                    value: Num.compact(Int64(store.summary.posts24h)),
+                    label: "منشور جديد",
+                    icon: "square.stack.3d.up.fill",
+                    tint: Theme.cyan
+                )
+                miniMetric(
+                    value: Num.compact(store.summary.views24h),
+                    label: "مشاهدة",
+                    icon: "play.fill",
+                    tint: Theme.violet
+                )
+            }
+
+            if store.isLoading && store.accounts.isEmpty {
+                Text("جارٍ جلب الأرقام من TikTok…")
+                    .font(.system(size: 11))
+                    .foregroundColor(Theme.textTertiary)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.vertical, 8)
+            } else if accounts24h.isEmpty {
+                HStack(spacing: 8) {
+                    Image(systemName: "moon.zzz.fill")
+                        .font(.system(size: 12))
+                        .foregroundColor(Theme.textTertiary)
+                    Text(store.accounts.isEmpty
+                         ? "أضف رابط حساب TikTok لعرض إحصاءات آخر ٢٤ ساعة."
+                         : "لا توجد منشورات جديدة خلال آخر ٢٤ ساعة.")
+                        .font(.system(size: 11))
+                        .foregroundColor(Theme.textSecondary)
+                    Spacer(minLength: 0)
+                }
+                .padding(.vertical, 4)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(Array(accounts24h.prefix(5).enumerated()), id: \.element.id) { index, account in
+                        Button {
+                            store.haptic(.impact)
+                            selectedAccount = account
+                        } label: {
+                            HStack(spacing: 10) {
+                                AvatarView(account: account, size: 32, showVerified: false)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(account.displayName)
+                                        .font(.system(size: 12, weight: .semibold))
+                                        .foregroundColor(Theme.text)
+                                        .lineLimit(1)
+                                    Text("@" + account.handle)
+                                        .font(.system(size: 9.5))
+                                        .foregroundColor(Theme.textTertiary)
+                                        .lineLimit(1)
+                                }
+                                Spacer(minLength: 6)
+                                VStack(alignment: .trailing, spacing: 2) {
+                                    Text("\(Num.full(Int64(account.views24h))) مشاهدة")
+                                        .font(.system(size: 11.5, weight: .bold, design: .rounded))
+                                        .foregroundColor(Theme.text)
+                                    Text("\(Num.full(Int64(account.posts24h))) منشور")
+                                        .font(.system(size: 9.5))
+                                        .foregroundColor(Theme.textTertiary)
+                                }
+                            }
+                            .padding(.vertical, 7)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(PressableStyle(scale: 0.99))
+
+                        if index < min(accounts24h.count, 5) - 1 {
+                            HairlineDivider().opacity(0.5)
+                        }
+                    }
+                }
+            }
+        }
+        .card(padding: 16)
+    }
+
+    private func miniMetric(value: String, label: String, icon: String, tint: Color) -> some View {
+        HStack(spacing: 9) {
+            Image(systemName: icon)
+                .font(.system(size: 12, weight: .bold))
+                .foregroundColor(tint)
+                .frame(width: 30, height: 30)
+                .background(Circle().fill(tint.opacity(0.13)))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(value)
+                    .font(.system(size: 17, weight: .heavy, design: .rounded))
+                    .foregroundColor(Theme.text)
+                Text(label)
+                    .font(.system(size: 9.5))
+                    .foregroundColor(Theme.textTertiary)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity)
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Theme.bgSoft))
     }
 
     // MARK: - شبكة الإحصاءات
@@ -491,7 +610,7 @@ struct DashboardView: View {
             .foregroundColor(Theme.textTertiary)
 
             if store.summary.accounts > 0 {
-                Text("المشاهدات المحسوبة من المنشورات المتاحة عبر TikTok API، وقد تقل عن إجمالي الحساب إذا تجاوزت المنشورات حد السحب.")
+                Text("آخر ٢٤ ساعة = المنشورات المنشورة خلال ٢٤ ساعة ومجموع مشاهداتها من البيانات العامة على TikTok. الأرقام قابلة للتحديث وقد تكون مقرّبة.")
                     .font(.system(size: 9.5))
                     .foregroundColor(Theme.textTertiary)
                     .multilineTextAlignment(.center)
