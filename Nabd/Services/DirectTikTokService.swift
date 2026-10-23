@@ -227,6 +227,8 @@ final class DirectTikTokService {
         let embedUser = embedData?["userInfo"] as? [String: Any] ?? [:]
         let profileUser = profileInfo?["user"] as? [String: Any] ?? [:]
         let profileStats = profileInfo?["stats"] as? [String: Any] ?? [:]
+        // statsV2 يحمل الأرقام الكاملة كنصوص (مثال: 96,411,082 بدل 96,400,000).
+        let profileStatsV2 = profileInfo?["statsV2"] as? [String: Any] ?? [:]
 
         let embedHandle = firstString(embedUser["uniqueId"]) ?? ""
         let profileHandle = firstString(profileUser["uniqueId"]) ?? ""
@@ -242,12 +244,19 @@ final class DirectTikTokService {
             embedUser["avatarThumbUrl"]
         )
         let verified = firstBool(profileUser["verified"], embedUser["verified"])
-        let followers = firstInt64(profileStats["followerCount"], embedUser["followerCount"]) ?? 0
-        let following = firstInt64(profileStats["followingCount"], embedUser["followingCount"]) ?? 0
+        let followers = firstInt64(
+            profileStatsV2["followerCount"], profileStats["followerCount"], embedUser["followerCount"]
+        ) ?? 0
+        let following = firstInt64(
+            profileStatsV2["followingCount"], profileStats["followingCount"], embedUser["followingCount"]
+        ) ?? 0
         let heartCount = firstInt64(
+            profileStatsV2["heartCount"], profileStatsV2["heart"],
             profileStats["heartCount"], profileStats["heart"], embedUser["heartCount"]
         ) ?? 0
-        let totalPosts = firstInt(profileStats["videoCount"]) ?? (knownPosts > 0 ? knownPosts : 0)
+        let totalPosts = firstInt(
+            profileStatsV2["videoCount"], profileStats["videoCount"]
+        ) ?? (knownPosts > 0 ? knownPosts : 0)
 
         let rawVideos = embedData?["videoList"] as? [[String: Any]] ?? []
         var seen = Set<String>()
@@ -255,6 +264,7 @@ final class DirectTikTokService {
         for raw in rawVideos {
             guard let id = stringValue(raw["id"]), !id.isEmpty, !seen.contains(id) else { continue }
             seen.insert(id)
+            let viewCount = firstInt64(raw["playCount"]) ?? 0
             videos.append(VideoItem(
                 id: id,
                 title: stringValue(raw["desc"]) ?? "",
@@ -262,10 +272,12 @@ final class DirectTikTokService {
                 shareUrl: "https://www.tiktok.com/@\(handle)/video/\(id)",
                 duration: 0,
                 createTime: Self.createTime(from: id),
-                views: firstInt64(raw["playCount"]) ?? 0,
+                views: viewCount,
                 likes: 0,
                 comments: 0,
-                shares: 0
+                shares: 0,
+                // TikTok يعرض مشاهدات الفيديو العامة مقرّبة فوق ١٠ آلاف.
+                viewsExact: viewCount < 10_000
             ))
         }
         videos.sort { $0.createTime > $1.createTime }
@@ -278,6 +290,31 @@ final class DirectTikTokService {
         let views24h = recent.reduce(Int64(0)) { $0 + $1.views }
         let weeklyViews = weekly.reduce(Int64(0)) { $0 + $1.views }
         let totalViews = videos.reduce(Int64(0)) { $0 + $1.views }
+
+        let allPostsLoaded = videos.isEmpty
+            ? totalPosts == 0
+            : (totalPosts > 0 && videos.count >= totalPosts)
+        let hasValidTimes = videos.allSatisfy { $0.createTime > 0 }
+        let oldestFetched = videos.last?.createTime ?? 0
+        let dailyComplete = windowComplete(
+            videos: videos,
+            totalPosts: totalPosts,
+            allPostsLoaded: allPostsLoaded,
+            hasValidTimes: hasValidTimes,
+            oldestFetched: oldestFetched,
+            cutoff: cutoff24h
+        )
+        let weeklyComplete = windowComplete(
+            videos: videos,
+            totalPosts: totalPosts,
+            allPostsLoaded: allPostsLoaded,
+            hasValidTimes: hasValidTimes,
+            oldestFetched: oldestFetched,
+            cutoff: cutoff7d
+        )
+        let viewsExact = videos.isEmpty ? totalPosts == 0 : videos.allSatisfy { $0.viewsExact }
+        let dailyViewsExact = dailyComplete && recent.allSatisfy { $0.viewsExact }
+        let weeklyViewsExact = weeklyComplete && weekly.allSatisfy { $0.viewsExact }
 
         let account = Account(
             id: "direct-\(handle)",
@@ -303,6 +340,12 @@ final class DirectTikTokService {
             coverage: totalPosts > 0 ? min(1, Double(videos.count) / Double(totalPosts)) : (videos.isEmpty ? 0 : 1),
             connected: false,
             publicStats: true,
+            viewsExact: viewsExact,
+            dailyComplete: dailyComplete,
+            dailyViewsExact: dailyViewsExact,
+            weeklyComplete: weeklyComplete,
+            weeklyViewsExact: weeklyViewsExact,
+            allPostsLoaded: allPostsLoaded,
             status: "public",
             error: nil,
             lastSyncedAt: ISO8601DateFormatter.nabd.string(from: Date()),
@@ -310,6 +353,22 @@ final class DirectTikTokService {
         )
 
         return DirectTikTokResult(account: account, videos: videos)
+    }
+
+    /// نافذة ٢٤ ساعة/٧ أيام مكتملة إذا كانت آخر ١٠ منشورات تغطيها بالكامل.
+    /// إن كان عدد المنشورات المحمّلة أقل من ١٠، فهي كل المنشورات العامة.
+    private func windowComplete(
+        videos: [VideoItem],
+        totalPosts: Int,
+        allPostsLoaded: Bool,
+        hasValidTimes: Bool,
+        oldestFetched: Int,
+        cutoff: Int
+    ) -> Bool {
+        if videos.isEmpty { return totalPosts == 0 }
+        if allPostsLoaded { return true }
+        if videos.count < 10 { return true }
+        return hasValidTimes && oldestFetched < cutoff
     }
 
     // MARK: - الشبكة والكوكيز
@@ -479,7 +538,12 @@ final class DirectTikTokService {
     private func firstInt64(_ values: Any?...) -> Int64? {
         for value in values {
             if let number = value as? NSNumber { return number.int64Value }
-            if let text = value as? String, let parsed = Int64(text) { return parsed }
+            if let text = value as? String {
+                let normalized = text
+                    .replacingOccurrences(of: ",", with: "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if let parsed = Int64(normalized) { return parsed }
+            }
         }
         return nil
     }
@@ -487,7 +551,12 @@ final class DirectTikTokService {
     private func firstInt(_ values: Any?...) -> Int? {
         for value in values {
             if let number = value as? NSNumber { return number.intValue }
-            if let text = value as? String, let parsed = Int(text) { return parsed }
+            if let text = value as? String {
+                let normalized = text
+                    .replacingOccurrences(of: ",", with: "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if let parsed = Int(normalized) { return parsed }
+            }
         }
         return nil
     }

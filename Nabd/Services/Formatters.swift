@@ -26,6 +26,26 @@ enum Num {
         grouped.string(from: NSNumber(value: value)) ?? "0"
     }
 
+    /// ‎≈ 936,173,282 — رقم عام يقرّبه TikTok.
+    static func approx(_ value: Int64) -> String {
+        "≈ " + full(value)
+    }
+
+    /// ‎≥ 936,173,282 — حد أدنى مؤكد.
+    static func atLeast(_ value: Int64) -> String {
+        "≥ " + full(value)
+    }
+
+    /// يعرض الرقم كاملاً، ويضيف ≈ فقط إذا كان TikTok يقرّبه.
+    static func maybeApprox(_ value: Int64, exact: Bool) -> String {
+        exact ? full(value) : approx(value)
+    }
+
+    /// نتيجة التقييم، مع ≈ عندما تعتمد على مشاهدات مقرّبة/ناقصة.
+    static func score(_ value: Int, exact: Bool) -> String {
+        exact ? "\(value)" : "≈ \(value)"
+    }
+
     /// 936.2 مليون
     static func compact(_ value: Int64) -> String {
         let absValue = abs(Double(value))
@@ -60,7 +80,8 @@ enum Num {
     }
 
     static func percent(_ value: Double) -> String {
-        "\(Int((value * 100).rounded()))%"
+        let pct = oneDecimal.string(from: NSNumber(value: value * 100)) ?? "0"
+        return pct + "%"
     }
 
     static func minutes(_ seconds: Int) -> String {

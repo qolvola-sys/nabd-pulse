@@ -120,7 +120,8 @@ enum DemoData {
                 views: views,
                 likes: Int64(Double(views) * (0.03 + rng.next() * 0.09)),
                 comments: Int64(Double(views) * (0.001 + rng.next() * 0.006)),
-                shares: Int64(Double(views) * (0.002 + rng.next() * 0.01))
+                shares: Int64(Double(views) * (0.002 + rng.next() * 0.01)),
+                viewsExact: true
             )
         }
     }

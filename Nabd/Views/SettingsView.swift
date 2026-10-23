@@ -448,7 +448,12 @@ struct SettingsView: View {
                 .foregroundColor(Theme.textTertiary)
                 .lineSpacing(4)
 
-            Text("آخر ٢٤ ساعة = المنشورات التي نُشرت خلال ٢٤ ساعة الماضية ومجموع مشاهداتها من البيانات العامة. التقييم الأسبوعي من 100 يعتمد على مشاهدات منشورات آخر ٧ أيام. قد تكون الأرقام مقرّبة، وقد تنقص إذا نشر الحساب أكثر من عشرة منشورات في الفترة.")
+            Text("المتابعون، المتابَعون، إجمالي الإعجابات وعدد المنشورات تُقرأ بدقة 100% من بيانات TikTok. مشاهدات الفيديو العامة يقرّبها TikTok للأرقام الكبيرة، لذلك تظهر بعلامة ≈ بدل تقديمها كرقم دقيق.")
+                .font(.system(size: 9.5))
+                .foregroundColor(Theme.textTertiary.opacity(0.85))
+                .lineSpacing(3)
+
+            Text("التقييم الأسبوعي من 100 يعتمد على مشاهدات منشورات آخر ٧ أيام. الحساب الذي ينشر أكثر من ١٠ منشورات في الفترة يُحسب من أحدث ١٠، وتحتاج الدقة الكاملة لمشاهدات كل المنشورات إلى TikTok Display API الرسمي.")
                 .font(.system(size: 9.5))
                 .foregroundColor(Theme.textTertiary.opacity(0.85))
                 .lineSpacing(3)
@@ -505,7 +510,7 @@ struct SettingsView: View {
             store.showToast("لا توجد حسابات للتصدير", .info)
             return
         }
-        let header = ["المنصة", "الحساب", "الاسم", "الرابط", "المنشورات", "منشورات ٢٤س", "مشاهدات ٢٤س", "منشورات ٧ أيام", "مشاهدات ٧ أيام", "التقييم الأسبوعي", "المشاهدات", "متوسط المشاهدات", "الإعجابات", "التعليقات", "المشاركات", "المتابعون", "آخر مزامنة"]
+        let header = ["المنصة", "الحساب", "الاسم", "الرابط", "المنشورات", "المنشورات المحمّلة", "منشورات ٢٤س", "مشاهدات ٢٤س", "اكتمال ٢٤س", "منشورات ٧ أيام", "مشاهدات ٧ أيام", "اكتمال ٧ أيام", "التقييم الأسبوعي", "دقة التقييم", "المشاهدات المحمّلة", "دقة المشاهدات", "متوسط المشاهدات", "إجمالي الإعجابات", "التعليقات", "المشاركات", "المتابعون", "آخر مزامنة"]
         let quote: (String) -> String = { value in
             "\"" + value.replacingOccurrences(of: "\"", with: "\"\"") + "\""
         }
@@ -517,14 +522,19 @@ struct SettingsView: View {
                 account.displayName,
                 account.url,
                 String(account.posts),
+                String(account.fetchedVideos),
                 String(account.posts24h),
                 String(account.views24h),
+                account.dailyComplete ? "مكتملة" : "أحدث ١٠",
                 String(account.posts7d),
                 String(account.weeklyViews),
+                account.weeklyComplete ? "مكتملة" : "أحدث ١٠",
                 String(account.weeklyScore),
+                account.weeklyScoreExact ? "دقيقة" : "غير مكتملة أو مقرّبة",
                 String(account.views),
+                account.viewsExact ? "دقيقة" : "مقرّبة من TikTok",
                 String(account.avgViewsPerPost),
-                String(account.videoLikes),
+                String(account.likes),
                 String(account.comments),
                 String(account.shares),
                 String(account.followers),

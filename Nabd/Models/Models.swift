@@ -93,13 +93,36 @@ struct Account: Identifiable, Codable, Hashable {
     var coverage: Double
     var connected: Bool
     var publicStats: Bool
+    /// هل مشاهدات المنشورات المحمّلة دقيقة ١٠٠٪؟ TikTok يقرّب المشاهدات العامة
+    /// فوق ١٠ آلاف، لذلك نعلّمها بـ ≈ بدل تقديمها كرقم دقيق.
+    var viewsExact: Bool
+    /// هل كل منشورات آخر ٢٤ ساعة موجودة ضمن المنشورات المحمّلة؟
+    var dailyComplete: Bool
+    var dailyViewsExact: Bool
+    /// هل كل منشورات آخر ٧ أيام موجودة ضمن المنشورات المحمّلة؟
+    var weeklyComplete: Bool
+    var weeklyViewsExact: Bool
+    /// هل تم تحميل كل منشورات الحساب (وليس آخر ١٠ فقط)؟
+    var allPostsLoaded: Bool
     var status: String
     var error: String?
     var lastSyncedAt: String?
     var createdAt: String
 
     var avgViewsPerPost: Int64 {
-        avgViews > 0 ? avgViews : (posts > 0 ? views / Int64(posts) : 0)
+        avgViews > 0 ? avgViews : (fetchedVideos > 0 ? views / Int64(fetchedVideos) : 0)
+    }
+
+    /// مجموع مشاهدات المنشورات المحمّلة دقيق فقط إذا كانت كل المنشورات محمّلة
+    /// وكانت مشاهداتها غير مقرّبة من TikTok.
+    var totalViewsExact: Bool { allPostsLoaded && viewsExact }
+
+    /// التقييم دقيق فقط إذا اكتملت نافذة الأسبوع وكانت المشاهدات غير مقرّبة.
+    var weeklyScoreExact: Bool { weeklyComplete && weeklyViewsExact }
+
+    /// هل توجد أرقام تفاعل على مستوى المنشورات (وليست إجمالي إعجابات الحساب)؟
+    var hasVideoEngagementData: Bool {
+        videoLikes > 0 || comments > 0 || shares > 0
     }
 
     /// متوسط مشاهدات المنشور الواحد خلال آخر ٢٤ ساعة.
@@ -112,7 +135,7 @@ struct Account: Identifiable, Codable, Hashable {
         WeeklyScore.value(for: weeklyViews)
     }
 
-    /// هل لدينا مشاهدات حقيقية؟ (تأتي فقط من الحسابات المربوطة عبر Display API)
+    /// هل لدينا مشاهدات محمّلة (عامة أو رسمية)؟
     var hasViewData: Bool { views > 0 }
 
     var avgLikesPerPost: Int64 {
@@ -154,6 +177,7 @@ struct Account: Identifiable, Codable, Hashable {
         case id, platform, handle, url, displayName, avatarUrl, isVerified, followers, following
         case likes, posts, views, videoLikes, comments, shares, fetchedVideos, posts24h, views24h, posts7d, weeklyViews
         case avgViews, coverage, connected, publicStats, status, error, lastSyncedAt, createdAt
+        case viewsExact, dailyComplete, dailyViewsExact, weeklyComplete, weeklyViewsExact, allPostsLoaded
     }
 
     init(from decoder: Decoder) throws {
@@ -182,6 +206,15 @@ struct Account: Identifiable, Codable, Hashable {
         coverage = c.flexDouble(.coverage)
         connected = c.flexBool(.connected)
         publicStats = c.flexBool(.publicStats)
+        viewsExact = c.flexBool(.viewsExact, default: connected)
+        dailyComplete = c.flexBool(.dailyComplete, default: connected)
+        dailyViewsExact = c.flexBool(.dailyViewsExact, default: connected && dailyComplete)
+        weeklyComplete = c.flexBool(.weeklyComplete, default: connected)
+        weeklyViewsExact = c.flexBool(.weeklyViewsExact, default: connected && weeklyComplete)
+        allPostsLoaded = c.flexBool(
+            .allPostsLoaded,
+            default: connected && fetchedVideos > 0 && posts > 0 && fetchedVideos >= posts
+        )
         status = c.flexString(.status, default: "pending")
         error = c.flexStringOrNil(.error)
         lastSyncedAt = c.flexStringOrNil(.lastSyncedAt)
@@ -195,6 +228,8 @@ struct Account: Identifiable, Codable, Hashable {
          posts7d: Int = 0, weeklyViews: Int64 = 0,
          avgViews: Int64 = 0, coverage: Double = 1, connected: Bool = true,
          publicStats: Bool = false,
+         viewsExact: Bool = true, dailyComplete: Bool = true, dailyViewsExact: Bool = true,
+         weeklyComplete: Bool = true, weeklyViewsExact: Bool = true, allPostsLoaded: Bool = false,
          status: String = "ok", error: String? = nil, lastSyncedAt: String? = nil, createdAt: String = "") {
         self.id = id
         self.platform = "tiktok"
@@ -220,6 +255,12 @@ struct Account: Identifiable, Codable, Hashable {
         self.coverage = coverage
         self.connected = connected
         self.publicStats = publicStats
+        self.viewsExact = viewsExact
+        self.dailyComplete = dailyComplete
+        self.dailyViewsExact = dailyViewsExact
+        self.weeklyComplete = weeklyComplete
+        self.weeklyViewsExact = weeklyViewsExact
+        self.allPostsLoaded = allPostsLoaded
         self.status = status
         self.error = error
         self.lastSyncedAt = lastSyncedAt
@@ -240,9 +281,11 @@ struct VideoItem: Identifiable, Codable, Hashable {
     var likes: Int64
     var comments: Int64
     var shares: Int64
+    /// هل عدد المشاهدات دقيق؟ الأرقام العامة الكبيرة يقرّبها TikTok.
+    var viewsExact: Bool
 
     enum CodingKeys: String, CodingKey {
-        case id, title, coverUrl, shareUrl, duration, createTime, views, likes, comments, shares
+        case id, title, coverUrl, shareUrl, duration, createTime, views, likes, comments, shares, viewsExact
     }
 
     init(from decoder: Decoder) throws {
@@ -257,11 +300,12 @@ struct VideoItem: Identifiable, Codable, Hashable {
         likes = c.flexInt64(.likes)
         comments = c.flexInt64(.comments)
         shares = c.flexInt64(.shares)
+        viewsExact = c.flexBool(.viewsExact, default: views < 10_000)
     }
 
     init(id: String, title: String, coverUrl: String? = nil, shareUrl: String? = nil,
          duration: Int = 0, createTime: Int = 0, views: Int64 = 0, likes: Int64 = 0,
-         comments: Int64 = 0, shares: Int64 = 0) {
+         comments: Int64 = 0, shares: Int64 = 0, viewsExact: Bool = false) {
         self.id = id
         self.title = title
         self.coverUrl = coverUrl
@@ -272,6 +316,7 @@ struct VideoItem: Identifiable, Codable, Hashable {
         self.likes = likes
         self.comments = comments
         self.shares = shares
+        self.viewsExact = viewsExact
     }
 }
 
@@ -282,6 +327,9 @@ struct Summary: Codable, Hashable {
     var connected: Int
     var posts: Int
     var views: Int64
+    /// إجمالي إعجابات الحسابات كما يعرضه TikTok (رقم عام دقيق).
+    var totalLikes: Int64
+    /// مجموع تفاعل المنشورات المحمّلة (متاح عبر Display API فقط).
     var likes: Int64
     var comments: Int64
     var shares: Int64
@@ -290,19 +338,31 @@ struct Summary: Codable, Hashable {
     var posts7d: Int
     var weeklyViews: Int64
     var avgViews: Int64
+    var loadedVideos: Int
+    var viewsExact: Bool
+    var dailyComplete: Bool
+    var dailyViewsExact: Bool
+    var weeklyComplete: Bool
+    var weeklyViewsExact: Bool
+    var allPostsLoaded: Bool
     var lastSyncedAt: String?
 
     var weeklyScore: Int {
         WeeklyScore.value(for: weeklyViews)
     }
 
-    static let empty = Summary(accounts: 0, connected: 0, posts: 0, views: 0, likes: 0,
-                               comments: 0, shares: 0, posts24h: 0, views24h: 0,
+    var weeklyScoreExact: Bool { weeklyComplete && weeklyViewsExact }
+
+    var allViewsExact: Bool { allPostsLoaded && viewsExact }
+
+    static let empty = Summary(accounts: 0, connected: 0, posts: 0, views: 0, totalLikes: 0,
+                               likes: 0, comments: 0, shares: 0, posts24h: 0, views24h: 0,
                                avgViews: 0, lastSyncedAt: nil)
 
     enum CodingKeys: String, CodingKey {
-        case accounts, connected, posts, views, likes, comments, shares, posts24h, views24h
-        case posts7d, weeklyViews, avgViews, lastSyncedAt
+        case accounts, connected, posts, views, totalLikes, likes, comments, shares, posts24h, views24h
+        case posts7d, weeklyViews, avgViews, loadedVideos, viewsExact, dailyComplete, dailyViewsExact
+        case weeklyComplete, weeklyViewsExact, allPostsLoaded, lastSyncedAt
     }
 
     init(from decoder: Decoder) throws {
@@ -311,6 +371,7 @@ struct Summary: Codable, Hashable {
         connected = c.flexInt(.connected)
         posts = c.flexInt(.posts)
         views = c.flexInt64(.views)
+        totalLikes = c.flexInt64(.totalLikes)
         likes = c.flexInt64(.likes)
         comments = c.flexInt64(.comments)
         shares = c.flexInt64(.shares)
@@ -319,16 +380,27 @@ struct Summary: Codable, Hashable {
         posts7d = c.flexInt(.posts7d)
         weeklyViews = c.flexInt64(.weeklyViews)
         avgViews = c.flexInt64(.avgViews)
+        loadedVideos = c.flexInt(.loadedVideos)
+        viewsExact = c.flexBool(.viewsExact)
+        dailyComplete = c.flexBool(.dailyComplete)
+        dailyViewsExact = c.flexBool(.dailyViewsExact)
+        weeklyComplete = c.flexBool(.weeklyComplete)
+        weeklyViewsExact = c.flexBool(.weeklyViewsExact)
+        allPostsLoaded = c.flexBool(.allPostsLoaded)
         lastSyncedAt = c.flexStringOrNil(.lastSyncedAt)
     }
 
-    init(accounts: Int, connected: Int, posts: Int, views: Int64, likes: Int64,
-         comments: Int64, shares: Int64, posts24h: Int, views24h: Int64,
-         avgViews: Int64, lastSyncedAt: String?, posts7d: Int = 0, weeklyViews: Int64 = 0) {
+    init(accounts: Int, connected: Int, posts: Int, views: Int64, totalLikes: Int64 = 0,
+         likes: Int64, comments: Int64, shares: Int64, posts24h: Int, views24h: Int64,
+         avgViews: Int64, lastSyncedAt: String?, posts7d: Int = 0, weeklyViews: Int64 = 0,
+         loadedVideos: Int = 0, viewsExact: Bool = false, dailyComplete: Bool = true,
+         dailyViewsExact: Bool = false, weeklyComplete: Bool = true,
+         weeklyViewsExact: Bool = false, allPostsLoaded: Bool = false) {
         self.accounts = accounts
         self.connected = connected
         self.posts = posts
         self.views = views
+        self.totalLikes = totalLikes
         self.likes = likes
         self.comments = comments
         self.shares = shares
@@ -337,12 +409,20 @@ struct Summary: Codable, Hashable {
         self.posts7d = posts7d
         self.weeklyViews = weeklyViews
         self.avgViews = avgViews
+        self.loadedVideos = loadedVideos
+        self.viewsExact = viewsExact
+        self.dailyComplete = dailyComplete
+        self.dailyViewsExact = dailyViewsExact
+        self.weeklyComplete = weeklyComplete
+        self.weeklyViewsExact = weeklyViewsExact
+        self.allPostsLoaded = allPostsLoaded
         self.lastSyncedAt = lastSyncedAt
     }
 
     static func make(from accounts: [Account]) -> Summary {
         let posts = accounts.reduce(0) { $0 + $1.posts }
         let views = accounts.reduce(Int64(0)) { $0 + $1.views }
+        let totalLikes = accounts.reduce(Int64(0)) { $0 + $1.likes }
         let likes = accounts.reduce(Int64(0)) { $0 + $1.videoLikes }
         let comments = accounts.reduce(Int64(0)) { $0 + $1.comments }
         let shares = accounts.reduce(Int64(0)) { $0 + $1.shares }
@@ -350,21 +430,30 @@ struct Summary: Codable, Hashable {
         let views24h = accounts.reduce(Int64(0)) { $0 + $1.views24h }
         let posts7d = accounts.reduce(0) { $0 + $1.posts7d }
         let weeklyViews = accounts.reduce(Int64(0)) { $0 + $1.weeklyViews }
+        let loadedVideos = accounts.reduce(0) { $0 + $1.fetchedVideos }
         let synced = accounts.compactMap { $0.lastSyncedAt }.sorted().last
         return Summary(
             accounts: accounts.count,
             connected: accounts.filter { $0.connected }.count,
             posts: posts,
             views: views,
+            totalLikes: totalLikes,
             likes: likes,
             comments: comments,
             shares: shares,
             posts24h: posts24h,
             views24h: views24h,
-            avgViews: posts > 0 ? views / Int64(posts) : 0,
+            avgViews: loadedVideos > 0 ? views / Int64(loadedVideos) : 0,
             lastSyncedAt: synced,
             posts7d: posts7d,
-            weeklyViews: weeklyViews
+            weeklyViews: weeklyViews,
+            loadedVideos: loadedVideos,
+            viewsExact: accounts.allSatisfy { $0.viewsExact },
+            dailyComplete: accounts.allSatisfy { $0.dailyComplete },
+            dailyViewsExact: accounts.allSatisfy { $0.dailyViewsExact },
+            weeklyComplete: accounts.allSatisfy { $0.weeklyComplete },
+            weeklyViewsExact: accounts.allSatisfy { $0.weeklyViewsExact },
+            allPostsLoaded: accounts.allSatisfy { $0.allPostsLoaded }
         )
     }
 }

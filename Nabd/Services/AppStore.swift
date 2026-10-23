@@ -224,7 +224,7 @@ final class AppStore: ObservableObject {
         do {
             let response: AccountsResponse = try await client.get("/api/accounts")
             accounts = response.accounts
-            summary = response.summary ?? Summary.make(from: response.accounts)
+            summary = Summary.make(from: response.accounts)
             source = .live
             errorMessage = nil
             lastRefreshed = Date()
@@ -302,6 +302,12 @@ final class AppStore: ObservableObject {
         merged.views24h = old.views24h
         merged.posts7d = old.posts7d
         merged.weeklyViews = old.weeklyViews
+        merged.viewsExact = old.viewsExact
+        merged.dailyComplete = old.dailyComplete
+        merged.dailyViewsExact = old.dailyViewsExact
+        merged.weeklyComplete = old.weeklyComplete
+        merged.weeklyViewsExact = old.weeklyViewsExact
+        merged.allPostsLoaded = old.allPostsLoaded
         return merged
     }
 

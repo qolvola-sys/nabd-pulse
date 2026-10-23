@@ -11,7 +11,7 @@ enum AccountSort: String, CaseIterable, Identifiable {
         case .weekly: return "تقييم الأسبوع"
         case .views24h: return "الأكثر مشاهدة ٢٤س"
         case .posts24h: return "الأكثر نشراً ٢٤س"
-        case .views: return "إجمالي المشاهدات"
+        case .views: return "مشاهدات المنشورات المحمّلة"
         case .posts: return "إجمالي المنشورات"
         case .followers: return "الأكثر متابعة"
         case .name: return "أبجدي"
@@ -146,6 +146,31 @@ struct AccountsView: View {
         max(store.accounts.map { $0.views24h }.max() ?? 1, 1)
     }
 
+    private var posts24hText: String {
+        store.summary.dailyComplete
+            ? Num.full(Int64(store.summary.posts24h))
+            : Num.atLeast(Int64(store.summary.posts24h))
+    }
+
+    private var views24hText: String {
+        Num.maybeApprox(
+            store.summary.views24h,
+            exact: store.summary.dailyComplete && store.summary.dailyViewsExact
+        )
+    }
+
+    private var weeklyViewsText: String {
+        Num.maybeApprox(
+            store.summary.weeklyViews,
+            exact: store.summary.weeklyComplete && store.summary.weeklyViewsExact
+        )
+    }
+
+    private var weeklyScoreText: String {
+        let exact = store.summary.weeklyComplete && store.summary.weeklyViewsExact
+        return Num.score(store.summary.weeklyScore, exact: exact) + "/100"
+    }
+
     private var header: some View {
         HStack(alignment: .center) {
             VStack(alignment: .leading, spacing: 3) {
@@ -179,13 +204,13 @@ struct AccountsView: View {
 
     private var summaryStrip: some View {
         HStack(spacing: 0) {
-            stripItem(title: "منشورات ٢٤س", value: Num.compact(Int64(store.summary.posts24h)), tint: Theme.cyan)
+            stripItem(title: "منشورات ٢٤س", value: posts24hText, tint: Theme.cyan)
             Rectangle().fill(Theme.borderSoft).frame(width: 1, height: 24)
-            stripItem(title: "مشاهدات ٢٤س", value: Num.compact(store.summary.views24h), tint: Theme.violet)
+            stripItem(title: "مشاهدات ٢٤س", value: views24hText, tint: Theme.violet)
             Rectangle().fill(Theme.borderSoft).frame(width: 1, height: 24)
-            stripItem(title: "مشاهدات ٧ أيام", value: Num.compact(store.summary.weeklyViews), tint: Theme.cyan)
+            stripItem(title: "مشاهدات ٧ أيام", value: weeklyViewsText, tint: Theme.cyan)
             Rectangle().fill(Theme.borderSoft).frame(width: 1, height: 24)
-            stripItem(title: "تقييم المنصة", value: "\(store.summary.weeklyScore)/100", tint: WeeklyScoreStyle.color(for: store.summary.weeklyScore))
+            stripItem(title: "تقييم المنصة", value: weeklyScoreText, tint: WeeklyScoreStyle.color(for: store.summary.weeklyScore))
         }
         .padding(.vertical, 12)
         .background(
@@ -204,7 +229,7 @@ struct AccountsView: View {
                 .font(.system(size: 15, weight: .bold, design: .rounded))
                 .foregroundColor(tint)
                 .lineLimit(1)
-                .minimumScaleFactor(0.7)
+                .minimumScaleFactor(0.45)
             Text(title)
                 .font(.system(size: 9.5))
                 .foregroundColor(Theme.textTertiary)
@@ -295,6 +320,22 @@ struct AccountRow: View {
         Theme.chartPalette[account.paletteIndex % Theme.chartPalette.count]
     }
 
+    private var views24hText: String {
+        Num.maybeApprox(account.views24h, exact: account.dailyComplete && account.dailyViewsExact)
+    }
+
+    private var posts24hText: String {
+        account.dailyComplete ? Num.full(Int64(account.posts24h)) : Num.atLeast(Int64(account.posts24h))
+    }
+
+    private var avg24hText: String {
+        Num.maybeApprox(account.avgViews24h, exact: account.dailyComplete && account.dailyViewsExact)
+    }
+
+    private var weeklyViewsText: String {
+        Num.maybeApprox(account.weeklyViews, exact: account.weeklyScoreExact)
+    }
+
     var body: some View {
         VStack(spacing: 12) {
             HStack(spacing: 12) {
@@ -321,9 +362,11 @@ struct AccountRow: View {
                 Spacer(minLength: 6)
 
                 VStack(alignment: .trailing, spacing: 2) {
-                    Text(Num.compact(account.views24h))
+                    Text(views24hText)
                         .font(.system(size: 15, weight: .bold, design: .rounded))
                         .foregroundColor(Theme.text)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.55)
                     Text("مشاهدة ٢٤س")
                         .font(.system(size: 9.5))
                         .foregroundColor(Theme.textTertiary)
@@ -331,9 +374,9 @@ struct AccountRow: View {
             }
 
             HStack(alignment: .center, spacing: 10) {
-                statColumn(value: Num.full(Int64(account.posts24h)), label: "منشور ٢٤س")
-                statColumn(value: Num.compact(account.avgViews24h), label: "متوسط ٢٤س")
-                statColumn(value: Num.compact(account.followers), label: "متابع")
+                statColumn(value: posts24hText, label: "منشور ٢٤س")
+                statColumn(value: avg24hText, label: "متوسط ٢٤س")
+                statColumn(value: Num.full(account.followers), label: "متابع")
 
                 Spacer(minLength: 2)
 
@@ -348,11 +391,13 @@ struct AccountRow: View {
                 Text("مشاهدات ٧ أيام")
                     .font(.system(size: 9.5))
                     .foregroundColor(Theme.textTertiary)
-                Text(Num.compact(account.weeklyViews))
+                Text(weeklyViewsText)
                     .font(.system(size: 11, weight: .bold, design: .rounded))
                     .foregroundColor(Theme.textSecondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.65)
                 Spacer(minLength: 4)
-                WeeklyScoreBadge(score: account.weeklyScore, compact: true)
+                WeeklyScoreBadge(score: account.weeklyScore, compact: true, exact: account.weeklyScoreExact)
             }
 
             ProgressBarLine(
@@ -370,7 +415,7 @@ struct AccountRow: View {
                 .font(.system(size: 11.5, weight: .semibold, design: .rounded))
                 .foregroundColor(Theme.textSecondary)
                 .lineLimit(1)
-                .minimumScaleFactor(0.72)
+                .minimumScaleFactor(0.5)
             Text(label)
                 .font(.system(size: 9))
                 .foregroundColor(Theme.textTertiary)

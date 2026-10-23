@@ -261,12 +261,16 @@ struct AddAccountsView: View {
                                 }
                             } else {
                                 VStack(alignment: .trailing, spacing: 1) {
-                                    Text("\(Num.compact(account.views24h)) مشاهدة ٢٤س")
+                                    Text("\(Num.maybeApprox(account.views24h, exact: account.dailyComplete && account.dailyViewsExact)) مشاهدة ٢٤س")
                                         .font(.system(size: 10.5, weight: .bold, design: .rounded))
                                         .foregroundColor(Theme.cyan)
-                                    Text("أسبوعياً \(Num.compact(account.weeklyViews)) · \(account.weeklyScore)/100")
+                                        .lineLimit(1)
+                                        .minimumScaleFactor(0.6)
+                                    Text("أسبوعياً \(Num.maybeApprox(account.weeklyViews, exact: account.weeklyScoreExact)) · \(Num.score(account.weeklyScore, exact: account.weeklyScoreExact))/100")
                                         .font(.system(size: 8.5, weight: .medium, design: .rounded))
                                         .foregroundColor(WeeklyScoreStyle.color(for: account.weeklyScore))
+                                        .lineLimit(1)
+                                        .minimumScaleFactor(0.6)
                                 }
                             }
                         }
@@ -331,7 +335,7 @@ struct AddAccountsView: View {
                 .foregroundColor(Theme.textSecondary)
             Text(store.useServer
                  ? "نسجّل دخول كل حساب مرة واحدة عبر TikTok Display API الرسمي، ثم يبقى مربوطاً ويُحدّث نفسه تلقائياً. لا نطلب كلمة المرور."
-                 : "نقرأ الصفحة العامة لكل حساب على TikTok لعدد المنشورات والمتابعين والإعجابات، ثم صفحة المنشورات لحساب مشاهدات آخر ٢٤ ساعة والتقييم الأسبوعي من 100. لا حاجة لتسجيل الدخول أو VPN، والأرقام العامة قد تكون مقرّبة.")
+                 : "نقرأ الصفحة العامة لكل حساب على TikTok: المتابعون والإعجابات وعدد المنشورات بدقة 100%، ثم أحدث المنشورات لحساب مشاهدات ٢٤ ساعة والتقييم الأسبوعي. مشاهدات الفيديو العامة يقرّبها TikTok وتظهر بعلامة ≈. لا حاجة لتسجيل الدخول أو VPN.")
                 .font(.system(size: 11))
                 .foregroundColor(Theme.textTertiary)
                 .lineSpacing(4)

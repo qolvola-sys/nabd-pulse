@@ -78,10 +78,10 @@ struct StatCard: View {
             }
 
             Text(value)
-                .font(.system(size: 21, weight: .bold, design: .rounded))
+                .font(.system(size: 19, weight: .bold, design: .rounded))
                 .foregroundColor(Theme.text)
                 .lineLimit(1)
-                .minimumScaleFactor(0.7)
+                .minimumScaleFactor(0.5)
 
             if let hint {
                 Text(hint)
@@ -160,14 +160,15 @@ enum WeeklyScoreStyle {
 struct WeeklyScoreBadge: View {
     let score: Int
     var compact: Bool = false
+    var exact: Bool = true
 
     private var tint: Color { WeeklyScoreStyle.color(for: score) }
 
     var body: some View {
         HStack(spacing: 4) {
-            Image(systemName: "chart.bar.fill")
+            Image(systemName: exact ? "chart.bar.fill" : "chart.bar.doc.horizontal.fill")
                 .font(.system(size: compact ? 8.5 : 10, weight: .bold))
-            Text("\(score)")
+            Text(Num.score(score, exact: exact))
                 .font(.system(size: compact ? 11 : 12.5, weight: .heavy, design: .rounded))
             if !compact {
                 Text("/100")
@@ -187,6 +188,7 @@ struct WeeklyScoreRing: View {
     let score: Int
     var size: CGFloat = 94
     var lineWidth: CGFloat = 8
+    var exact: Bool = true
 
     private var tint: Color { WeeklyScoreStyle.color(for: score) }
 
@@ -202,13 +204,16 @@ struct WeeklyScoreRing: View {
                 )
                 .rotationEffect(.degrees(-90))
             VStack(spacing: 1) {
-                Text("\(score)")
-                    .font(.system(size: size * 0.30, weight: .heavy, design: .rounded))
+                Text(Num.score(score, exact: exact))
+                    .font(.system(size: size * (exact ? 0.30 : 0.24), weight: .heavy, design: .rounded))
                     .foregroundColor(Theme.text)
-                Text("من 100")
-                    .font(.system(size: size * 0.105, weight: .semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                Text(exact ? "من 100" : "تقدير من 100")
+                    .font(.system(size: size * 0.09, weight: .semibold))
                     .foregroundColor(Theme.textTertiary)
             }
+            .padding(.horizontal, size * 0.12)
         }
         .frame(width: size, height: size)
         .overlay(Circle().strokeBorder(tint.opacity(0.08), lineWidth: 1))
@@ -320,6 +325,9 @@ struct DonutChart: View {
                 Text(centerValue)
                     .font(.system(size: 17, weight: .bold, design: .rounded))
                     .foregroundColor(Theme.text)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.42)
+                    .padding(.horizontal, 12)
                 Text(centerCaption)
                     .font(.system(size: 9.5))
                     .foregroundColor(Theme.textTertiary)

@@ -8,7 +8,71 @@ struct DashboardView: View {
     @State private var selectedAccount: Account?
     @State private var wavePhase: CGFloat = 0
 
-    private var hasViews: Bool { store.summary.views > 0 }
+    private var hasViews: Bool { store.summary.loadedVideos > 0 && store.summary.views > 0 }
+
+    private var hasVideoEngagementData: Bool {
+        store.summary.likes + store.summary.comments + store.summary.shares > 0
+    }
+
+    private var heroValue: Int64 {
+        hasViews ? store.summary.views : store.summary.totalLikes
+    }
+
+    private var heroExact: Bool {
+        hasViews ? store.summary.viewsExact : true
+    }
+
+    private var heroScopeLabel: String {
+        guard hasViews else { return "إجمالي الإعجابات" }
+        return store.summary.allPostsLoaded ? "إجمالي مشاهدات المنشورات" : "مشاهدات المنشورات المحمّلة"
+    }
+
+    private var dailyExact: Bool {
+        store.summary.dailyComplete && store.summary.dailyViewsExact
+    }
+
+    private var weeklyExact: Bool {
+        store.summary.weeklyComplete && store.summary.weeklyViewsExact
+    }
+
+    private var weeklyFootnote: String {
+        if store.summary.weeklyComplete && store.summary.weeklyViewsExact {
+            return "كل منشورات آخر ٧ أيام محمّلة، والنتيجة دقيقة 100%."
+        }
+        if !store.summary.weeklyComplete && !store.summary.weeklyViewsExact {
+            return "≈ النتيجة من أحدث ١٠ منشورات فقط، ومشاهدات TikTok العامة مقرّبة."
+        }
+        if !store.summary.weeklyComplete {
+            return "النتيجة من أحدث ١٠ منشورات فقط؛ الحسابات كثيفة النشر تحتاج ربطاً رسمياً لقراءة كل المنشورات."
+        }
+        return "≈ مشاهدات الفيديو العامة يقرّبها TikTok؛ النتيجة تقريبية."
+    }
+
+    private var posts24hText: String {
+        let value = Int64(store.summary.posts24h)
+        return store.summary.dailyComplete ? Num.full(value) : Num.atLeast(value)
+    }
+
+    private var views24hText: String {
+        Num.maybeApprox(store.summary.views24h, exact: dailyExact)
+    }
+
+    private var posts7dText: String {
+        let value = Int64(store.summary.posts7d)
+        return store.summary.weeklyComplete ? Num.full(value) : Num.atLeast(value)
+    }
+
+    private func account24hViewsText(_ account: Account) -> String {
+        Num.maybeApprox(account.views24h, exact: account.dailyComplete && account.dailyViewsExact)
+    }
+
+    private func account24hPostsText(_ account: Account) -> String {
+        account.dailyComplete ? Num.full(Int64(account.posts24h)) : Num.atLeast(Int64(account.posts24h))
+    }
+
+    private func accountWeeklyViewsText(_ account: Account) -> String {
+        Num.maybeApprox(account.weeklyViews, exact: account.weeklyScoreExact)
+    }
 
     private var topFive: [Account] {
         Array(store.topAccounts.prefix(5))
@@ -188,9 +252,11 @@ struct DashboardView: View {
                         Image(systemName: hasViews ? "play.rectangle.fill" : "hand.thumbsup.fill")
                             .font(.system(size: 11))
                             .foregroundColor(Theme.cyan)
-                        Text(hasViews ? "إجمالي المشاهدات" : "إجمالي الإعجابات")
+                        Text(heroScopeLabel)
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundColor(Theme.textSecondary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
                     }
                     Spacer()
                     Text("TikTok")
@@ -201,17 +267,26 @@ struct DashboardView: View {
                         .background(Capsule().fill(Color.white.opacity(0.07)))
                 }
 
-                Text(Num.compact(hasViews ? store.summary.views : store.summary.likes))
+                Text(Num.maybeApprox(heroValue, exact: heroExact))
                     .font(.system(size: 42, weight: .heavy, design: .rounded))
                     .foregroundColor(Theme.text)
-                    .minimumScaleFactor(0.6)
+                    .minimumScaleFactor(0.5)
                     .lineLimit(1)
                     .padding(.top, 12)
 
-                Text(Num.full(hasViews ? store.summary.views : store.summary.likes) + (hasViews ? " مشاهدة" : " إعجاب"))
+                Text(hasViews
+                     ? "\(Num.full(Int64(store.summary.loadedVideos))) منشوراً محمّلاً من \(Num.full(Int64(store.summary.posts)))"
+                     : "إعجاب ظاهر للعامة")
                     .font(.system(size: 11.5, weight: .medium, design: .rounded))
                     .foregroundColor(Theme.textTertiary)
                     .padding(.top, 2)
+
+                if hasViews && !store.summary.viewsExact {
+                    Text("≈ مشاهدات الفيديو العامة يقرّبها TikTok")
+                        .font(.system(size: 9.5, weight: .medium))
+                        .foregroundColor(Theme.gold.opacity(0.9))
+                        .padding(.top, 3)
+                }
 
                 PulseWave(phase: wavePhase)
                     .stroke(Theme.brand, style: StrokeStyle(lineWidth: 2.4, lineCap: .round, lineJoin: .round))
@@ -221,11 +296,11 @@ struct DashboardView: View {
                     .clipped()
 
                 HStack(spacing: 0) {
-                    heroStat(value: Num.compact(Int64(store.summary.posts24h)), caption: "منشور ٢٤ س")
+                    heroStat(value: posts24hText, caption: "منشور ٢٤ س")
                     divider
-                    heroStat(value: Num.compact(store.summary.views24h), caption: "مشاهدة ٢٤ س")
+                    heroStat(value: views24hText, caption: "مشاهدة ٢٤ س")
                     divider
-                    heroStat(value: Num.compact(Int64(store.summary.accounts)), caption: "حساب")
+                    heroStat(value: Num.full(Int64(store.summary.accounts)), caption: "حساب")
                 }
                 .padding(.top, 6)
             }
@@ -258,6 +333,8 @@ struct DashboardView: View {
             Text(value)
                 .font(.system(size: 15, weight: .bold, design: .rounded))
                 .foregroundColor(Theme.text)
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
             Text(caption)
                 .font(.system(size: 10))
                 .foregroundColor(Theme.textTertiary)
@@ -283,20 +360,20 @@ struct DashboardView: View {
         VStack(spacing: 13) {
             SectionHeader(
                 title: "آخر ٢٤ ساعة",
-                subtitle: "عدد المنشورات ومشاهداتها لكل منصة",
+                subtitle: "مشاهدات المنشورات التي نُشرت خلال آخر ٢٤ ساعة",
                 actionTitle: "كل الحسابات",
                 action: { onOpenAccounts() }
             )
 
             HStack(spacing: 10) {
                 miniMetric(
-                    value: Num.compact(Int64(store.summary.posts24h)),
+                    value: posts24hText,
                     label: "منشور جديد",
                     icon: "square.stack.3d.up.fill",
                     tint: Theme.cyan
                 )
                 miniMetric(
-                    value: Num.compact(store.summary.views24h),
+                    value: views24hText,
                     label: "مشاهدة",
                     icon: "play.fill",
                     tint: Theme.violet
@@ -343,10 +420,12 @@ struct DashboardView: View {
                                 }
                                 Spacer(minLength: 6)
                                 VStack(alignment: .trailing, spacing: 2) {
-                                    Text("\(Num.full(Int64(account.views24h))) مشاهدة")
+                                    Text("\(account24hViewsText(account)) مشاهدة")
                                         .font(.system(size: 11.5, weight: .bold, design: .rounded))
                                         .foregroundColor(Theme.text)
-                                    Text("\(Num.full(Int64(account.posts24h))) منشور")
+                                        .lineLimit(1)
+                                        .minimumScaleFactor(0.75)
+                                    Text("\(account24hPostsText(account)) منشور")
                                         .font(.system(size: 9.5))
                                         .foregroundColor(Theme.textTertiary)
                                 }
@@ -361,6 +440,15 @@ struct DashboardView: View {
                         }
                     }
                 }
+            }
+            if !store.summary.dailyComplete || !store.summary.dailyViewsExact {
+                Text(store.summary.dailyComplete
+                     ? "≈ مشاهدات الفيديو العامة يقرّبها TikTok."
+                     : "الحسابات التي نشرت أكثر من ١٠ منشورات في ٢٤ ساعة تظهر من أحدث ١٠ فقط.")
+                    .font(.system(size: 9.5))
+                    .foregroundColor(Theme.textTertiary)
+                    .multilineTextAlignment(.center)
+                    .lineSpacing(3)
             }
         }
         .card(padding: 16)
@@ -377,6 +465,8 @@ struct DashboardView: View {
                 Text(value)
                     .font(.system(size: 17, weight: .heavy, design: .rounded))
                     .foregroundColor(Theme.text)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
                 Text(label)
                     .font(.system(size: 9.5))
                     .foregroundColor(Theme.textTertiary)
@@ -394,26 +484,26 @@ struct DashboardView: View {
         VStack(spacing: 14) {
             SectionHeader(
                 title: "التقييم الأسبوعي",
-                subtitle: "من 100 حسب مشاهدات آخر ٧ أيام",
+                subtitle: "من 100 حسب مشاهدات منشورات آخر ٧ أيام",
                 actionTitle: "كل الحسابات",
                 action: { onOpenAccounts() }
             )
 
             HStack(alignment: .center, spacing: 16) {
-                WeeklyScoreRing(score: store.summary.weeklyScore)
+                WeeklyScoreRing(score: store.summary.weeklyScore, exact: weeklyExact)
 
                 VStack(alignment: .leading, spacing: 10) {
                     weeklyMetric(
                         icon: "play.fill",
                         tint: Theme.violet,
-                        value: Num.compact(store.summary.weeklyViews),
-                        label: "مشاهدة خلال ٧ أيام"
+                        value: Num.maybeApprox(store.summary.weeklyViews, exact: weeklyExact),
+                        label: "مشاهدة لمنشورات ٧ أيام"
                     )
                     weeklyMetric(
                         icon: "square.stack.3d.up.fill",
                         tint: Theme.cyan,
-                        value: Num.compact(Int64(store.summary.posts7d)),
-                        label: "منشور خلال ٧ أيام"
+                        value: posts7dText,
+                        label: "منشور في ٧ أيام"
                     )
                     HStack(spacing: 5) {
                         Image(systemName: "sparkles")
@@ -447,10 +537,12 @@ struct DashboardView: View {
                                     .foregroundColor(Theme.text)
                                     .lineLimit(1)
                                 Spacer(minLength: 4)
-                                Text("\(Num.compact(account.weeklyViews)) مشاهدة")
+                                Text("\(accountWeeklyViewsText(account)) مشاهدة")
                                     .font(.system(size: 10, weight: .medium, design: .rounded))
                                     .foregroundColor(Theme.textSecondary)
-                                WeeklyScoreBadge(score: account.weeklyScore, compact: true)
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.7)
+                                WeeklyScoreBadge(score: account.weeklyScore, compact: true, exact: account.weeklyScoreExact)
                             }
                             .padding(.vertical, 7)
                             .contentShape(Rectangle())
@@ -464,7 +556,7 @@ struct DashboardView: View {
                 }
             }
 
-            Text("يُحسب التقييم من مجموع مشاهدات المنشورات المنشورة خلال ٧ أيام، على مقياس لوغاريتمي من 100. يعتمد على آخر ١٠ منشورات متاحة علناً، لذا قد يكون أقل من الرقم الفعلي للحسابات كثيفة النشر.")
+            Text(weeklyFootnote)
                 .font(.system(size: 9.5))
                 .foregroundColor(Theme.textTertiary)
                 .multilineTextAlignment(.center)
@@ -485,6 +577,8 @@ struct DashboardView: View {
                 Text(value)
                     .font(.system(size: 14, weight: .bold, design: .rounded))
                     .foregroundColor(Theme.text)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
                 Text(label)
                     .font(.system(size: 9.5))
                     .foregroundColor(Theme.textTertiary)
@@ -498,37 +592,51 @@ struct DashboardView: View {
         LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
             StatCard(
                 title: "المنشورات",
-                value: Num.compact(Int64(store.summary.posts)),
+                value: Num.full(Int64(store.summary.posts)),
                 icon: "square.stack.3d.up.fill",
                 tint: Theme.cyan,
                 hint: "على \(store.summary.accounts) حساباً"
             )
             StatCard(
                 title: hasViews ? "متوسط المشاهدات" : "متوسط الإعجابات",
-                value: Num.compact(hasViews ? store.summary.avgViews : averageLikesPerPost),
+                value: hasViews
+                    ? Num.maybeApprox(store.summary.avgViews, exact: store.summary.viewsExact)
+                    : Num.full(averageLikesPerPost),
                 icon: "chart.line.uptrend.xyaxis",
                 tint: Theme.violet,
-                hint: "لكل منشور"
+                hint: hasViews
+                    ? (store.summary.allPostsLoaded ? "لكل منشور" : "للمنشورات المحمّلة")
+                    : "لكل منشور"
             )
             StatCard(
                 title: "المتابعون",
-                value: Num.compact(store.totalFollowers),
+                value: Num.full(store.totalFollowers),
                 icon: "person.3.fill",
                 tint: Theme.pink,
                 hint: "مجموع الحسابات"
             )
-            StatCard(
-                title: hasViews ? "معدل التفاعل" : "إجمالي الإعجابات",
-                value: hasViews ? Num.percent(engagementRate) : Num.compact(store.summary.likes),
-                icon: "hand.thumbsup.fill",
-                tint: Theme.gold,
-                hint: hasViews ? "إعجاب وتعليق ومشاركة" : "ظاهرة للعامة"
-            )
+            if hasVideoEngagementData {
+                StatCard(
+                    title: "معدل التفاعل",
+                    value: Num.percent(engagementRate),
+                    icon: "hand.thumbsup.fill",
+                    tint: Theme.gold,
+                    hint: "للمنشورات المحمّلة"
+                )
+            } else {
+                StatCard(
+                    title: "إجمالي الإعجابات",
+                    value: Num.full(store.summary.totalLikes),
+                    icon: "hand.thumbsup.fill",
+                    tint: Theme.gold,
+                    hint: "رقم عام دقيق"
+                )
+            }
         }
     }
 
     private var averageLikesPerPost: Int64 {
-        store.summary.posts > 0 ? store.summary.likes / Int64(store.summary.posts) : 0
+        store.summary.posts > 0 ? store.summary.totalLikes / Int64(store.summary.posts) : 0
     }
 
     private var engagementRate: Double {
@@ -567,14 +675,20 @@ struct DashboardView: View {
     private var distributionCard: some View {
         VStack(spacing: 16) {
             SectionHeader(
-                title: hasViews ? "توزيع المشاهدات" : "توزيع الإعجابات",
-                subtitle: "أكبر ٤ حسابات + الباقي"
+                title: hasViews
+                    ? (store.summary.allPostsLoaded ? "توزيع المشاهدات" : "توزيع مشاهدات المنشورات المحمّلة")
+                    : "توزيع الإعجابات",
+                subtitle: hasViews && !store.summary.allPostsLoaded
+                    ? "من المنشورات المحمّلة — أكبر ٤ حسابات + الباقي"
+                    : "أكبر ٤ حسابات + الباقي"
             )
 
             HStack(alignment: .center, spacing: 18) {
                 DonutChart(
                     segments: donutSegments,
-                    centerValue: Num.compact(hasViews ? store.summary.views : store.summary.likes),
+                    centerValue: hasViews
+                        ? Num.maybeApprox(store.summary.views, exact: store.summary.viewsExact)
+                        : Num.full(store.summary.totalLikes),
                     centerCaption: hasViews ? "مشاهدة" : "إعجاب"
                 )
 
@@ -601,7 +715,7 @@ struct DashboardView: View {
     }
 
     private func shareText(_ value: Int64) -> String {
-        let total = max(hasViews ? store.summary.views : store.summary.likes, 1)
+        let total = max(hasViews ? store.summary.views : store.summary.totalLikes, 1)
         return Num.percent(Double(value) / Double(total))
     }
 
@@ -611,7 +725,9 @@ struct DashboardView: View {
         VStack(spacing: 14) {
             SectionHeader(
                 title: hasViews ? "الأعلى مشاهدة" : "الأعلى إعجاباً",
-                subtitle: "أفضل الحسابات أداءً",
+                subtitle: hasViews && !store.summary.allPostsLoaded
+                    ? "حسب المنشورات المحمّلة"
+                    : "أفضل الحسابات أداءً",
                 actionTitle: "كل الحسابات",
                 action: { onOpenAccounts() }
             )
@@ -667,9 +783,13 @@ struct DashboardView: View {
                                 }
                                 Spacer(minLength: 8)
                                 VStack(alignment: .trailing, spacing: 2) {
-                                    Text(Num.compact(hasViews ? account.views : account.likes))
+                                    Text(hasViews
+                                         ? Num.maybeApprox(account.views, exact: account.viewsExact)
+                                         : Num.full(account.likes))
                                         .font(.system(size: 13, weight: .bold, design: .rounded))
                                         .foregroundColor(Theme.text)
+                                        .lineLimit(1)
+                                        .minimumScaleFactor(0.6)
                                     Text("\(Num.full(Int64(account.posts))) منشور")
                                         .font(.system(size: 9.5))
                                         .foregroundColor(Theme.textTertiary)
@@ -721,7 +841,7 @@ struct DashboardView: View {
             .foregroundColor(Theme.textTertiary)
 
             if store.summary.accounts > 0 {
-                Text("آخر ٢٤ ساعة والتقييم الأسبوعي محسوبان من البيانات العامة على TikTok. التقييم من 100 حسب مشاهدات منشورات آخر ٧ أيام المتاحة، والأرقام قابلة للتحديث وقد تكون مقرّبة.")
+                Text("الأرقام بدون ≈ دقيقة 100% من TikTok. مشاهدات الفيديو العامة يقرّبها TikTok وتظهر بعلامة ≈. التقييم من 100 حسب مشاهدات منشورات آخر ٧ أيام.")
                     .font(.system(size: 9.5))
                     .foregroundColor(Theme.textTertiary)
                     .multilineTextAlignment(.center)

@@ -15,6 +15,43 @@ struct AccountDetailView: View {
 
     private var current: Account { detail ?? account }
 
+    private var dailyExact: Bool {
+        current.dailyComplete && current.dailyViewsExact
+    }
+
+    private var weeklyExact: Bool {
+        current.weeklyComplete && current.weeklyViewsExact
+    }
+
+    private var views24hText: String {
+        Num.maybeApprox(current.views24h, exact: dailyExact)
+    }
+
+    private var posts24hText: String {
+        current.dailyComplete ? Num.full(Int64(current.posts24h)) : Num.atLeast(Int64(current.posts24h))
+    }
+
+    private var weeklyViewsText: String {
+        Num.maybeApprox(current.weeklyViews, exact: weeklyExact)
+    }
+
+    private var posts7dText: String {
+        current.weeklyComplete ? Num.full(Int64(current.posts7d)) : Num.atLeast(Int64(current.posts7d))
+    }
+
+    private var weeklyFootnote: String {
+        if current.weeklyComplete && current.weeklyViewsExact {
+            return "كل منشورات آخر ٧ أيام محمّلة، والنتيجة دقيقة 100%."
+        }
+        if !current.weeklyComplete && !current.weeklyViewsExact {
+            return "≈ النتيجة من أحدث ١٠ منشورات فقط، ومشاهدات TikTok العامة مقرّبة."
+        }
+        if !current.weeklyComplete {
+            return "النتيجة من أحدث ١٠ منشورات فقط؛ الحساب نشر أكثر من ١٠ منشورات خلال ٧ أيام."
+        }
+        return "≈ مشاهدات الفيديو العامة يقرّبها TikTok؛ النتيجة تقريبية."
+    }
+
     private var palette: Color {
         Theme.chartPalette[current.paletteIndex % Theme.chartPalette.count]
     }
@@ -180,21 +217,25 @@ struct AccountDetailView: View {
 
             HStack(spacing: 0) {
                 detailMetric(
-                    value: Num.full(Int64(current.posts24h)),
+                    value: posts24hText,
                     label: "منشور جديد",
                     icon: "square.stack.3d.up.fill",
                     tint: Theme.cyan
                 )
                 Rectangle().fill(Theme.borderSoft).frame(width: 1, height: 34)
                 detailMetric(
-                    value: Num.full(current.views24h),
+                    value: views24hText,
                     label: "مشاهدة",
                     icon: "play.fill",
                     tint: Theme.violet
                 )
             }
 
-            Text("المشاهدات هي مجموع مشاهدات المنشورات التي نُشرت خلال آخر ٢٤ ساعة، من البيانات العامة على TikTok.")
+            Text(current.dailyComplete && current.dailyViewsExact
+                 ? "كل منشورات آخر ٢٤ ساعة محمّلة، والمشاهدات دقيقة 100%."
+                 : (current.dailyComplete
+                    ? "≈ مشاهدات الفيديو العامة يقرّبها TikTok."
+                    : "الحساب نشر أكثر من ١٠ منشورات في ٢٤ ساعة؛ تُعرض أحدث ١٠ فقط."))
                 .font(.system(size: 9.5))
                 .foregroundColor(Theme.textTertiary)
                 .lineSpacing(3)
@@ -211,7 +252,7 @@ struct AccountDetailView: View {
                 .font(.system(size: 18, weight: .heavy, design: .rounded))
                 .foregroundColor(Theme.text)
                 .lineLimit(1)
-                .minimumScaleFactor(0.65)
+                .minimumScaleFactor(0.5)
             Text(label)
                 .font(.system(size: 9.5))
                 .foregroundColor(Theme.textTertiary)
@@ -231,24 +272,24 @@ struct AccountDetailView: View {
                     .font(.system(size: 12.5, weight: .bold))
                     .foregroundColor(Theme.text)
                 Spacer()
-                WeeklyScoreBadge(score: current.weeklyScore)
+                WeeklyScoreBadge(score: current.weeklyScore, exact: weeklyExact)
             }
 
             HStack(alignment: .center, spacing: 16) {
-                WeeklyScoreRing(score: current.weeklyScore, size: 84, lineWidth: 7)
+                WeeklyScoreRing(score: current.weeklyScore, size: 84, lineWidth: 7, exact: weeklyExact)
 
                 VStack(alignment: .leading, spacing: 9) {
                     weeklyStat(
                         icon: "play.fill",
                         tint: Theme.violet,
-                        value: Num.compact(current.weeklyViews),
-                        label: "مشاهدة خلال ٧ أيام"
+                        value: weeklyViewsText,
+                        label: "مشاهدة لمنشورات ٧ أيام"
                     )
                     weeklyStat(
                         icon: "square.stack.3d.up.fill",
                         tint: Theme.cyan,
-                        value: Num.full(Int64(current.posts7d)),
-                        label: "منشور خلال ٧ أيام"
+                        value: posts7dText,
+                        label: "منشور في ٧ أيام"
                     )
                     Text(WeeklyScore.label(for: current.weeklyScore))
                         .font(.system(size: 10, weight: .semibold))
@@ -258,7 +299,7 @@ struct AccountDetailView: View {
                 Spacer(minLength: 0)
             }
 
-            Text("التقييم من 100 يعتمد على مجموع مشاهدات المنشورات المنشورة خلال آخر ٧ أيام، وليس على عدد المتابعين. تُحسب من المنشورات المتاحة علناً في آخر سحب.")
+            Text(weeklyFootnote)
                 .font(.system(size: 9.5))
                 .foregroundColor(Theme.textTertiary)
                 .lineSpacing(3)
@@ -277,6 +318,8 @@ struct AccountDetailView: View {
                 Text(value)
                     .font(.system(size: 13.5, weight: .bold, design: .rounded))
                     .foregroundColor(Theme.text)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.55)
                 Text(label)
                     .font(.system(size: 9.5))
                     .foregroundColor(Theme.textTertiary)
@@ -325,21 +368,26 @@ struct AccountDetailView: View {
 
     private var statsGrid: some View {
         LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
-            StatCard(title: "المنشورات", value: Num.compact(Int64(current.posts)), icon: "square.stack.3d.up.fill", tint: Theme.cyan)
+            StatCard(title: "المنشورات", value: Num.full(Int64(current.posts)), icon: "square.stack.3d.up.fill", tint: Theme.cyan)
             StatCard(
                 title: "المشاهدات",
-                value: current.hasViewData ? Num.compact(current.views) : "—",
+                value: current.hasViewData ? Num.maybeApprox(current.views, exact: current.viewsExact) : "—",
                 icon: "play.fill",
                 tint: Theme.violet,
-                hint: current.hasViewData ? "من المنشورات العامة" : "لا توجد بيانات عامة"
+                hint: current.hasViewData
+                    ? (current.allPostsLoaded ? "كل المنشورات" : "من المنشورات المحمّلة")
+                    : "لا توجد بيانات عامة"
             )
             StatCard(
                 title: current.hasViewData ? "متوسط المشاهدات" : "متوسط الإعجابات",
-                value: Num.compact(current.hasViewData ? current.avgViewsPerPost : current.avgLikesPerPost),
+                value: current.hasViewData
+                    ? Num.maybeApprox(current.avgViewsPerPost, exact: current.viewsExact)
+                    : Num.full(current.avgLikesPerPost),
                 icon: "chart.bar.fill",
-                tint: Theme.pink
+                tint: Theme.pink,
+                hint: current.hasViewData && !current.allPostsLoaded ? "للمنشورات المحمّلة" : nil
             )
-            StatCard(title: "المتابعون", value: Num.compact(current.followers), icon: "person.3.fill", tint: Theme.gold)
+            StatCard(title: "المتابعون", value: Num.full(current.followers), icon: "person.3.fill", tint: Theme.gold)
         }
     }
 
@@ -347,12 +395,12 @@ struct AccountDetailView: View {
         HStack(spacing: 0) {
             engagementItem(
                 icon: "heart.fill",
-                value: current.hasViewData ? current.videoLikes : current.likes,
-                label: "إعجاب",
+                value: current.hasVideoEngagementData ? current.videoLikes : current.likes,
+                label: current.hasVideoEngagementData ? "إعجاب" : "إجمالي الإعجابات",
                 tint: Theme.pink
             )
             Rectangle().fill(Theme.borderSoft).frame(width: 1, height: 26)
-            if current.hasViewData {
+            if current.hasVideoEngagementData {
                 engagementItem(icon: "bubble.right.fill", value: current.comments, label: "تعليق", tint: Theme.cyan)
                 Rectangle().fill(Theme.borderSoft).frame(width: 1, height: 26)
                 engagementItem(icon: "arrowshape.turn.up.right.fill", value: current.shares, label: "مشاركة", tint: Theme.violet)
@@ -372,14 +420,16 @@ struct AccountDetailView: View {
             Image(systemName: icon)
                 .font(.system(size: 11))
                 .foregroundColor(tint)
-            Text(Num.compact(value))
+            Text(Num.full(value))
                 .font(.system(size: 12, weight: .bold, design: .rounded))
                 .foregroundColor(Theme.text)
                 .lineLimit(1)
-                .minimumScaleFactor(0.7)
+                .minimumScaleFactor(0.5)
             Text(label)
                 .font(.system(size: 8.5))
                 .foregroundColor(Theme.textTertiary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
         }
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 2)
@@ -399,6 +449,16 @@ struct AccountDetailView: View {
                             .foregroundColor(Theme.textSecondary)
                     }
                     ProgressBarLine(value: min(current.coverage, 1), gradient: Theme.violetGradient, height: 6)
+                    Text(current.allPostsLoaded
+                         ? "كل منشورات الحساب محمّلة."
+                         : "المعروض أحدث \(Num.full(Int64(current.fetchedVideos))) منشوراً متاحاً علناً.")
+                        .font(.system(size: 10))
+                        .foregroundColor(Theme.textTertiary)
+                    Text(current.viewsExact
+                         ? "مشاهدات المنشورات المحمّلة دقيقة 100%."
+                         : "مشاهدات الفيديو العامة يقرّبها TikTok — تظهر بعلامة ≈.")
+                        .font(.system(size: 10))
+                        .foregroundColor(current.viewsExact ? Theme.green.opacity(0.9) : Theme.gold.opacity(0.9))
                     Text("آخر مزامنة: \(Dates.relative(current.lastSyncedAt))")
                         .font(.system(size: 10))
                         .foregroundColor(Theme.textTertiary)
@@ -598,14 +658,16 @@ struct VideoRow: View {
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
                 HStack(spacing: 8) {
-                    Label(Num.compact(video.views), systemImage: "play.fill")
+                    Label(Num.maybeApprox(video.views, exact: video.viewsExact), systemImage: "play.fill")
                     if video.likes > 0 {
-                        Label(Num.compact(video.likes), systemImage: "heart.fill")
+                        Label(Num.full(video.likes), systemImage: "heart.fill")
                     }
                     Text(Dates.videoDate(video.createTime))
                 }
                 .font(.system(size: 9.5, weight: .medium, design: .rounded))
                 .foregroundColor(Theme.textTertiary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
             }
 
             Spacer(minLength: 4)
