@@ -601,7 +601,7 @@ struct DashboardView: View {
                 title: hasViews ? "متوسط المشاهدات" : "متوسط الإعجابات",
                 value: hasViews
                     ? Num.maybeApprox(store.summary.avgViews, exact: store.summary.viewsExact)
-                    : Num.full(averageLikesPerPost),
+                    : Num.maybeApprox(averageLikesPerPost, exact: store.summary.profileExact),
                 icon: "chart.line.uptrend.xyaxis",
                 tint: Theme.violet,
                 hint: hasViews

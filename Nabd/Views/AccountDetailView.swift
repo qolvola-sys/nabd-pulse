@@ -382,7 +382,7 @@ struct AccountDetailView: View {
                 title: current.hasViewData ? "متوسط المشاهدات" : "متوسط الإعجابات",
                 value: current.hasViewData
                     ? Num.maybeApprox(current.avgViewsPerPost, exact: current.viewsExact)
-                    : Num.full(current.avgLikesPerPost),
+                    : Num.maybeApprox(current.avgLikesPerPost, exact: current.profileExact),
                 icon: "chart.bar.fill",
                 tint: Theme.pink,
                 hint: current.hasViewData && !current.allPostsLoaded ? "للمنشورات المحمّلة" : nil
