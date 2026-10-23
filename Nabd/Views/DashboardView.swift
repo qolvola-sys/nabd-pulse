@@ -841,7 +841,7 @@ struct DashboardView: View {
             .foregroundColor(Theme.textTertiary)
 
             if store.summary.accounts > 0 {
-                Text("الأرقام بدون ≈ دقيقة 100% من TikTok. مشاهدات الفيديو العامة يقرّبها TikTok وتظهر بعلامة ≈. التقييم من 100 حسب مشاهدات منشورات آخر ٧ أيام.")
+                Text("بيانات TikTok التي تظهر بدون ≈ دقيقة 100%. مشاهدات الفيديو العامة يقرّبها TikTok وتظهر بعلامة ≈. التقييم من 100 محسوب من مشاهدات منشورات آخر ٧ أيام.")
                     .font(.system(size: 9.5))
                     .foregroundColor(Theme.textTertiary)
                     .multilineTextAlignment(.center)
