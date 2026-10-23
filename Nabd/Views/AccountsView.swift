@@ -2,12 +2,13 @@ import SwiftUI
 import UIKit
 
 enum AccountSort: String, CaseIterable, Identifiable {
-    case views24h, posts24h, views, posts, followers, name, recent
+    case weekly, views24h, posts24h, views, posts, followers, name, recent
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
+        case .weekly: return "تقييم الأسبوع"
         case .views24h: return "الأكثر مشاهدة ٢٤س"
         case .posts24h: return "الأكثر نشراً ٢٤س"
         case .views: return "إجمالي المشاهدات"
@@ -23,7 +24,7 @@ struct AccountsView: View {
     @EnvironmentObject private var store: AppStore
 
     @State private var search = ""
-    @State private var sort: AccountSort = .views24h
+    @State private var sort: AccountSort = .weekly
     @State private var selected: Account?
     @State private var showAdd = false
     @State private var pendingDelete: Account?
@@ -38,6 +39,7 @@ struct AccountsView: View {
             }
         }
         switch sort {
+        case .weekly: list.sort { $0.weeklyViews > $1.weeklyViews }
         case .views24h: list.sort { $0.views24h > $1.views24h }
         case .posts24h: list.sort { $0.posts24h > $1.posts24h }
         case .views: list.sort { $0.views > $1.views }
@@ -181,7 +183,9 @@ struct AccountsView: View {
             Rectangle().fill(Theme.borderSoft).frame(width: 1, height: 24)
             stripItem(title: "مشاهدات ٢٤س", value: Num.compact(store.summary.views24h), tint: Theme.violet)
             Rectangle().fill(Theme.borderSoft).frame(width: 1, height: 24)
-            stripItem(title: "الحسابات", value: "\(store.accounts.count)", tint: Theme.green)
+            stripItem(title: "مشاهدات ٧ أيام", value: Num.compact(store.summary.weeklyViews), tint: Theme.cyan)
+            Rectangle().fill(Theme.borderSoft).frame(width: 1, height: 24)
+            stripItem(title: "تقييم المنصة", value: "\(store.summary.weeklyScore)/100", tint: WeeklyScoreStyle.color(for: store.summary.weeklyScore))
         }
         .padding(.vertical, 12)
         .background(
@@ -199,9 +203,13 @@ struct AccountsView: View {
             Text(value)
                 .font(.system(size: 15, weight: .bold, design: .rounded))
                 .foregroundColor(tint)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
             Text(title)
                 .font(.system(size: 9.5))
                 .foregroundColor(Theme.textTertiary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
         }
         .frame(maxWidth: .infinity)
     }
@@ -333,6 +341,20 @@ struct AccountRow: View {
                     .layoutPriority(1)
             }
 
+            HStack(spacing: 7) {
+                Image(systemName: "calendar.badge.clock")
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .foregroundColor(Theme.violet)
+                Text("مشاهدات ٧ أيام")
+                    .font(.system(size: 9.5))
+                    .foregroundColor(Theme.textTertiary)
+                Text(Num.compact(account.weeklyViews))
+                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                    .foregroundColor(Theme.textSecondary)
+                Spacer(minLength: 4)
+                WeeklyScoreBadge(score: account.weeklyScore, compact: true)
+            }
+
             ProgressBarLine(
                 value: Double(account.views24h) / Double(max(maxViews, 1)),
                 gradient: LinearGradient(colors: [palette.opacity(0.9), palette.opacity(0.4)], startPoint: .leading, endPoint: .trailing),
@@ -360,10 +382,12 @@ struct AccountRow: View {
     private var statusChip: some View {
         if account.status == "needs_reconnect" {
             Chip(text: "أعد الربط", color: Theme.red, icon: "exclamationmark.triangle.fill")
-        } else if account.status == "error" {
-            Chip(text: "تعذّر التحديث", color: Theme.red, icon: "exclamationmark.triangle.fill")
+        } else if account.status == "error" || account.status == "cached" {
+            Chip(text: "آخر بيانات محفوظة", color: Theme.textSecondary, icon: "clock.arrow.circlepath")
+        } else if account.status == "pending" {
+            Chip(text: "بانتظار التحديث", color: Theme.gold, icon: "clock")
         } else if account.status == "public" {
-            Chip(text: "بيانات عامة", color: Theme.cyan, icon: "globe")
+            Chip(text: "بيانات مباشرة", color: Theme.cyan, icon: "globe")
         } else if !account.connected {
             Chip(text: "غير مربوط", color: Theme.gold, icon: "link.badge.plus")
         } else if account.coverage < 0.95 && account.coverage > 0 {

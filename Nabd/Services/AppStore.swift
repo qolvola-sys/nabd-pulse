@@ -84,6 +84,7 @@ final class AppStore: ObservableObject {
     private var directVideos: [String: [VideoItem]] = [:]
     private var didBootstrap = false
     private var lastAutoRefresh: Date?
+    private var lastDirectRefreshSucceeded = false
 
     private enum Keys {
         static let serverURL = "nabd.serverURL"
@@ -141,7 +142,7 @@ final class AppStore: ObservableObject {
     }
 
     var needsReconnect: [Account] {
-        accounts.filter { $0.status == "needs_reconnect" || ($0.status == "error" && !$0.connected) }
+        accounts.filter { $0.status == "needs_reconnect" }
     }
 
     // MARK: - الإقلاع
@@ -180,6 +181,7 @@ final class AppStore: ObservableObject {
             accounts = []
             summary = .empty
             source = .empty
+            errorMessage = nil
             if useServer {
                 if let cached = loadCache() {
                     accounts = cached
@@ -241,14 +243,15 @@ final class AppStore: ObservableObject {
 
     private func refreshDirect(showSpinner: Bool = true) async {
         guard !accounts.isEmpty else {
-            source = accounts.isEmpty ? .empty : .direct
+            source = .empty
+            lastDirectRefreshSucceeded = false
             return
         }
         if showSpinner { isLoading = accounts.isEmpty }
         defer { isLoading = false }
 
         var updated: [String: Account] = [:]
-        var lastError: String?
+        var successes = 0
         for account in accounts {
             do {
                 let result = try await direct.fetch(
@@ -256,25 +259,48 @@ final class AppStore: ObservableObject {
                     knownPosts: account.posts,
                     createdAt: account.createdAt
                 )
-                updated[account.id] = result.account
+                var fresh = result.account
+                if result.videos.isEmpty {
+                    fresh = preservingVideoStats(in: fresh, from: account)
+                }
+                fresh.status = "public"
+                fresh.error = nil
+                updated[account.id] = fresh
                 directVideos[account.handle] = result.videos
+                successes += 1
             } catch {
-                var failed = account
-                failed.status = "error"
-                failed.error = error.localizedDescription
-                updated[account.id] = failed
-                lastError = error.localizedDescription
+                // لا نستبدل الأرقام المحفوظة عند تعذّر الاتصال، ولا نعرض خطأ أحمر.
+                var stable = account
+                stable.status = (stable.fetchedVideos > 0 || stable.views > 0) ? "cached" : "pending"
+                stable.error = nil
+                stable.publicStats = stable.publicStats || !stable.connected
+                updated[account.id] = stable
             }
-            try? await Task.sleep(nanoseconds: 250_000_000)
+            try? await Task.sleep(nanoseconds: 140_000_000)
         }
 
         accounts = accounts.map { updated[$0.id] ?? $0 }
         summary = Summary.make(from: accounts)
-        source = .direct
-        errorMessage = lastError
+        source = successes > 0 ? .direct : .cache
+        errorMessage = nil
+        lastDirectRefreshSucceeded = successes > 0
         lastRefreshed = Date()
         lastAutoRefresh = Date()
         saveDirectAccounts()
+    }
+
+    /// عند نجاح بيانات البروفايل فقط (بدون قائمة المنشورات) نحتفظ بإحصاءات الفيديو السابقة.
+    private func preservingVideoStats(in fresh: Account, from old: Account) -> Account {
+        var merged = fresh
+        merged.views = old.views
+        merged.avgViews = old.avgViews
+        merged.fetchedVideos = old.fetchedVideos
+        merged.coverage = old.coverage
+        merged.posts24h = old.posts24h
+        merged.views24h = old.views24h
+        merged.posts7d = old.posts7d
+        merged.weeklyViews = old.weeklyViews
+        return merged
     }
 
     func syncAll() async {
@@ -293,12 +319,12 @@ final class AppStore: ObservableObject {
 
         if isDirect {
             await refreshDirect(showSpinner: false)
-            if let error = errorMessage {
-                showToast(error, .error)
-                haptic(.error)
-            } else {
+            if lastDirectRefreshSucceeded {
                 showToast("تم تحديث \(accounts.count) حساباً من TikTok", .success)
                 haptic(.success)
+            } else if !accounts.isEmpty {
+                showToast("تم عرض أحدث الإحصاءات المحفوظة", .info)
+                haptic(.impact)
             }
             return
         }
@@ -335,8 +361,14 @@ final class AppStore: ObservableObject {
                     knownPosts: account.posts,
                     createdAt: account.createdAt
                 )
+                var fresh = result.account
+                if result.videos.isEmpty {
+                    fresh = preservingVideoStats(in: fresh, from: account)
+                }
+                fresh.status = "public"
+                fresh.error = nil
                 if let index = accounts.firstIndex(where: { $0.id == account.id }) {
-                    accounts[index] = result.account
+                    accounts[index] = fresh
                     summary = Summary.make(from: accounts)
                 }
                 directVideos[account.handle] = result.videos
@@ -344,8 +376,14 @@ final class AppStore: ObservableObject {
                 showToast("تم تحديث @\(account.handle)", .success)
                 haptic(.success)
             } catch {
-                showToast(error.localizedDescription, .error)
-                haptic(.error)
+                if let index = accounts.firstIndex(where: { $0.id == account.id }) {
+                    accounts[index].status = (account.fetchedVideos > 0 || account.views > 0) ? "cached" : "pending"
+                    accounts[index].error = nil
+                    summary = Summary.make(from: accounts)
+                }
+                saveDirectAccounts()
+                showToast("تم الاحتفاظ بآخر إحصاءات @\(account.handle)", .info)
+                haptic(.impact)
             }
             return
         }
@@ -430,29 +468,36 @@ final class AppStore: ObservableObject {
                 directVideos[handle] = result.videos
                 created.append(result.account)
             } catch {
+                // نضيف الحساب بحالة انتظار بدل عرض خطأ. التحديث التالي سيكمل البيانات.
+                var pending = placeholder
+                pending.status = "pending"
+                pending.error = nil
                 if let index = accounts.firstIndex(where: { $0.handle == handle }) {
-                    accounts[index].status = "error"
-                    accounts[index].error = error.localizedDescription
+                    accounts[index] = pending
                 }
-                var failed = placeholder
-                failed.status = "error"
-                failed.error = error.localizedDescription
-                created.append(failed)
+                created.append(pending)
             }
-            try? await Task.sleep(nanoseconds: 250_000_000)
+            try? await Task.sleep(nanoseconds: 140_000_000)
         }
 
         summary = Summary.make(from: accounts)
         source = .direct
         lastRefreshed = Date()
+        lastDirectRefreshSucceeded = created.contains { $0.status == "public" || $0.status == "ok" }
         saveDirectAccounts()
 
-        if !created.contains(where: { $0.status != "error" }) && created.contains(where: { $0.status == "error" }) {
-            showToast(created.first?.error ?? "تعذّر جلب بيانات الحساب", .error)
-            haptic(.error)
-        } else {
-            showToast("تمت إضافة \(created.filter { $0.status != "error" }.count) حساب", .success)
+        let ready = created.filter { $0.status == "public" || $0.status == "ok" }.count
+        if !created.isEmpty {
+            if ready == 0 {
+                showToast("تمت الإضافة — ستُحدَّث الأرقام تلقائياً", .info)
+            } else if ready < created.count {
+                showToast("تمت إضافة \(created.count) حساب — بعضها سيُحدَّث تلقائياً", .info)
+            } else {
+                showToast("تمت إضافة \(created.count) حساب", .success)
+            }
             haptic(.success)
+        } else if !invalid.isEmpty {
+            showToast("لم نتعرف على أي رابط صالح", .info)
         }
 
         return AddAccountsResponse(
@@ -501,13 +546,17 @@ final class AppStore: ObservableObject {
                 knownPosts: account.posts,
                 createdAt: account.createdAt
             )
+            var fresh = result.account
+            if result.videos.isEmpty {
+                fresh = preservingVideoStats(in: fresh, from: account)
+            }
             directVideos[account.handle] = result.videos
             saveDirectAccounts()
             if let index = accounts.firstIndex(where: { $0.id == account.id }) {
-                accounts[index] = result.account
+                accounts[index] = fresh
                 summary = Summary.make(from: accounts)
             }
-            return (result.account, Array(result.videos.prefix(limit)))
+            return (fresh, Array(result.videos.prefix(limit)))
         }
         guard let client else { throw APIError.missingCredentials }
         let response: AccountDetailResponse = try await client.get("/api/accounts/\(account.id)?limit=\(limit)")
@@ -612,6 +661,8 @@ final class AppStore: ObservableObject {
             var updated = account
             let drift = 1.0 + rng.next() * 0.018
             updated.views = Int64(Double(updated.views) * drift) + Int64(rng.int(0..<900))
+            updated.views24h = Int64(Double(updated.views24h) * drift)
+            updated.weeklyViews = Int64(Double(updated.weeklyViews) * drift)
             updated.avgViews = Int64(Double(updated.avgViews) * drift)
             updated.videoLikes = Int64(Double(updated.videoLikes) * drift)
             updated.lastSyncedAt = ISO8601DateFormatter.nabd.string(from: Date())
@@ -684,10 +735,18 @@ final class AppStore: ObservableObject {
             source = .empty
             return
         }
-        accounts = payload.accounts
+        accounts = payload.accounts.map { account in
+            var stable = account
+            if stable.status == "error" {
+                stable.status = (stable.fetchedVideos > 0 || stable.views > 0) ? "cached" : "pending"
+            }
+            stable.error = nil
+            return stable
+        }
         directVideos = payload.videos
         summary = Summary.make(from: accounts)
-        source = .direct
+        source = accounts.isEmpty ? .empty : .direct
+        errorMessage = nil
         lastRefreshed = Dates.parse(payload.savedAt)
     }
 

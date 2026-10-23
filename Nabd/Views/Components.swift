@@ -130,6 +130,91 @@ struct Chip: View {
     }
 }
 
+// MARK: - التقييم الأسبوعي
+
+enum WeeklyScoreStyle {
+    static func color(for score: Int) -> Color {
+        switch score {
+        case 80...: return Theme.green
+        case 60...: return Theme.cyan
+        case 35...: return Theme.gold
+        case 1...: return Theme.violet
+        default: return Theme.textTertiary
+        }
+    }
+
+    static func gradient(for score: Int) -> LinearGradient {
+        switch score {
+        case 80...:
+            return LinearGradient(colors: [Theme.green, Theme.cyan], startPoint: .leading, endPoint: .trailing)
+        case 60...:
+            return LinearGradient(colors: [Theme.cyan, Theme.violet], startPoint: .leading, endPoint: .trailing)
+        case 35...:
+            return LinearGradient(colors: [Theme.gold, Color(hex: 0xFF8A5C)], startPoint: .leading, endPoint: .trailing)
+        default:
+            return LinearGradient(colors: [Theme.violet, Theme.cyan], startPoint: .leading, endPoint: .trailing)
+        }
+    }
+}
+
+struct WeeklyScoreBadge: View {
+    let score: Int
+    var compact: Bool = false
+
+    private var tint: Color { WeeklyScoreStyle.color(for: score) }
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "chart.bar.fill")
+                .font(.system(size: compact ? 8.5 : 10, weight: .bold))
+            Text("\(score)")
+                .font(.system(size: compact ? 11 : 12.5, weight: .heavy, design: .rounded))
+            if !compact {
+                Text("/100")
+                    .font(.system(size: 8.5, weight: .semibold, design: .rounded))
+                    .opacity(0.8)
+            }
+        }
+        .foregroundColor(tint)
+        .padding(.horizontal, compact ? 7 : 9)
+        .padding(.vertical, compact ? 4 : 5)
+        .background(Capsule().fill(tint.opacity(0.12)))
+        .overlay(Capsule().strokeBorder(tint.opacity(0.22), lineWidth: 1))
+    }
+}
+
+struct WeeklyScoreRing: View {
+    let score: Int
+    var size: CGFloat = 94
+    var lineWidth: CGFloat = 8
+
+    private var tint: Color { WeeklyScoreStyle.color(for: score) }
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(Theme.borderSoft, lineWidth: lineWidth)
+            Circle()
+                .trim(from: 0, to: min(max(CGFloat(score) / 100, 0), 1))
+                .stroke(
+                    WeeklyScoreStyle.gradient(for: score),
+                    style: StrokeStyle(lineWidth: lineWidth, lineCap: .round)
+                )
+                .rotationEffect(.degrees(-90))
+            VStack(spacing: 1) {
+                Text("\(score)")
+                    .font(.system(size: size * 0.30, weight: .heavy, design: .rounded))
+                    .foregroundColor(Theme.text)
+                Text("من 100")
+                    .font(.system(size: size * 0.105, weight: .semibold))
+                    .foregroundColor(Theme.textTertiary)
+            }
+        }
+        .frame(width: size, height: size)
+        .overlay(Circle().strokeBorder(tint.opacity(0.08), lineWidth: 1))
+    }
+}
+
 struct RankBadge: View {
     let index: Int
 

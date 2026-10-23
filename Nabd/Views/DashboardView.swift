@@ -41,6 +41,7 @@ struct DashboardView: View {
 
                 heroCard
                 last24hCard
+                weeklyCard
                 statsGrid
 
                 if !store.needsReconnect.isEmpty {
@@ -272,6 +273,12 @@ struct DashboardView: View {
             .sorted { $0.views24h > $1.views24h }
     }
 
+    private var weeklyAccounts: [Account] {
+        store.accounts
+            .filter { $0.weeklyViews > 0 }
+            .sorted { $0.weeklyViews > $1.weeklyViews }
+    }
+
     private var last24hCard: some View {
         VStack(spacing: 13) {
             SectionHeader(
@@ -379,6 +386,110 @@ struct DashboardView: View {
         .padding(10)
         .frame(maxWidth: .infinity)
         .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Theme.bgSoft))
+    }
+
+    // MARK: - التقييم الأسبوعي
+
+    private var weeklyCard: some View {
+        VStack(spacing: 14) {
+            SectionHeader(
+                title: "التقييم الأسبوعي",
+                subtitle: "من 100 حسب مشاهدات آخر ٧ أيام",
+                actionTitle: "كل الحسابات",
+                action: { onOpenAccounts() }
+            )
+
+            HStack(alignment: .center, spacing: 16) {
+                WeeklyScoreRing(score: store.summary.weeklyScore)
+
+                VStack(alignment: .leading, spacing: 10) {
+                    weeklyMetric(
+                        icon: "play.fill",
+                        tint: Theme.violet,
+                        value: Num.compact(store.summary.weeklyViews),
+                        label: "مشاهدة خلال ٧ أيام"
+                    )
+                    weeklyMetric(
+                        icon: "square.stack.3d.up.fill",
+                        tint: Theme.cyan,
+                        value: Num.compact(Int64(store.summary.posts7d)),
+                        label: "منشور خلال ٧ أيام"
+                    )
+                    HStack(spacing: 5) {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 9, weight: .bold))
+                        Text(WeeklyScore.label(for: store.summary.weeklyScore))
+                            .font(.system(size: 10.5, weight: .semibold))
+                    }
+                    .foregroundColor(WeeklyScoreStyle.color(for: store.summary.weeklyScore))
+                }
+
+                Spacer(minLength: 0)
+            }
+
+            if !weeklyAccounts.isEmpty {
+                HairlineDivider()
+
+                VStack(spacing: 0) {
+                    ForEach(Array(weeklyAccounts.prefix(4).enumerated()), id: \.element.id) { index, account in
+                        Button {
+                            store.haptic(.impact)
+                            selectedAccount = account
+                        } label: {
+                            HStack(spacing: 9) {
+                                Text("\(index + 1)")
+                                    .font(.system(size: 10, weight: .bold, design: .rounded))
+                                    .foregroundColor(index == 0 ? Theme.gold : Theme.textTertiary)
+                                    .frame(width: 16)
+                                AvatarView(account: account, size: 29, showVerified: false)
+                                Text(account.displayName)
+                                    .font(.system(size: 11.5, weight: .semibold))
+                                    .foregroundColor(Theme.text)
+                                    .lineLimit(1)
+                                Spacer(minLength: 4)
+                                Text("\(Num.compact(account.weeklyViews)) مشاهدة")
+                                    .font(.system(size: 10, weight: .medium, design: .rounded))
+                                    .foregroundColor(Theme.textSecondary)
+                                WeeklyScoreBadge(score: account.weeklyScore, compact: true)
+                            }
+                            .padding(.vertical, 7)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(PressableStyle(scale: 0.99))
+
+                        if index < min(weeklyAccounts.count, 4) - 1 {
+                            HairlineDivider().opacity(0.5)
+                        }
+                    }
+                }
+            }
+
+            Text("يُحسب التقييم من مجموع مشاهدات المنشورات المنشورة خلال ٧ أيام، على مقياس لوغاريتمي من 100. يعتمد على آخر ١٠ منشورات متاحة علناً، لذا قد يكون أقل من الرقم الفعلي للحسابات كثيفة النشر.")
+                .font(.system(size: 9.5))
+                .foregroundColor(Theme.textTertiary)
+                .multilineTextAlignment(.center)
+                .lineSpacing(3)
+                .padding(.horizontal, 2)
+        }
+        .card(padding: 18)
+    }
+
+    private func weeklyMetric(icon: String, tint: Color, value: String, label: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.system(size: 10, weight: .bold))
+                .foregroundColor(tint)
+                .frame(width: 23, height: 23)
+                .background(Circle().fill(tint.opacity(0.12)))
+            VStack(alignment: .leading, spacing: 1) {
+                Text(value)
+                    .font(.system(size: 14, weight: .bold, design: .rounded))
+                    .foregroundColor(Theme.text)
+                Text(label)
+                    .font(.system(size: 9.5))
+                    .foregroundColor(Theme.textTertiary)
+            }
+        }
     }
 
     // MARK: - شبكة الإحصاءات
@@ -610,7 +721,7 @@ struct DashboardView: View {
             .foregroundColor(Theme.textTertiary)
 
             if store.summary.accounts > 0 {
-                Text("آخر ٢٤ ساعة = المنشورات المنشورة خلال ٢٤ ساعة ومجموع مشاهداتها من البيانات العامة على TikTok. الأرقام قابلة للتحديث وقد تكون مقرّبة.")
+                Text("آخر ٢٤ ساعة والتقييم الأسبوعي محسوبان من البيانات العامة على TikTok. التقييم من 100 حسب مشاهدات منشورات آخر ٧ أيام المتاحة، والأرقام قابلة للتحديث وقد تكون مقرّبة.")
                     .font(.system(size: 9.5))
                     .foregroundColor(Theme.textTertiary)
                     .multilineTextAlignment(.center)

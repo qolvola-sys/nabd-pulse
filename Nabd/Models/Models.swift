@@ -1,6 +1,33 @@
 import Foundation
 import SwiftUI
 
+// MARK: - التقييم الأسبوعي
+
+/// تقييم من ١٠٠ يعتمد على مجموع مشاهدات المنشورات المنشورة خلال آخر ٧ أيام.
+/// المقياس لوغاريتمي حتى لا تختفي الحسابات الصغيرة: ١٠٠ مشاهدة = ٠، و١٠ ملايين = ١٠٠.
+enum WeeklyScore {
+    static let minimumViews: Double = 100
+    static let maximumViews: Double = 10_000_000
+
+    static func value(for views: Int64) -> Int {
+        guard views > 0 else { return 0 }
+        let clamped = min(max(Double(views), minimumViews), maximumViews)
+        let range = log10(maximumViews) - log10(minimumViews)
+        let score = (log10(clamped) - log10(minimumViews)) / range * 100
+        return Int(score.rounded())
+    }
+
+    static func label(for score: Int) -> String {
+        switch score {
+        case 85...: return "أداء استثنائي"
+        case 65...: return "أداء قوي"
+        case 40...: return "أداء متوسط"
+        case 1...: return "بداية جيدة"
+        default: return "لا مشاهدات بعد"
+        }
+    }
+}
+
 // MARK: - فك ترميز مرن (يتحمل غياب الحقول أو اختلاف أنواعها)
 
 extension KeyedDecodingContainer {
@@ -60,6 +87,8 @@ struct Account: Identifiable, Codable, Hashable {
     var fetchedVideos: Int
     var posts24h: Int
     var views24h: Int64
+    var posts7d: Int
+    var weeklyViews: Int64
     var avgViews: Int64
     var coverage: Double
     var connected: Bool
@@ -76,6 +105,11 @@ struct Account: Identifiable, Codable, Hashable {
     /// متوسط مشاهدات المنشور الواحد خلال آخر ٢٤ ساعة.
     var avgViews24h: Int64 {
         posts24h > 0 ? views24h / Int64(posts24h) : 0
+    }
+
+    /// تقييم من ١٠٠ حسب مشاهدات المنشورات المنشورة خلال آخر ٧ أيام.
+    var weeklyScore: Int {
+        WeeklyScore.value(for: weeklyViews)
     }
 
     /// هل لدينا مشاهدات حقيقية؟ (تأتي فقط من الحسابات المربوطة عبر Display API)
@@ -95,9 +129,11 @@ struct Account: Identifiable, Codable, Hashable {
     var statusLabel: String {
         switch status {
         case "ok": return "متصل"
-        case "public": return "بيانات عامة"
+        case "public": return "بيانات مباشرة"
         case "needs_reconnect": return "يحتاج إعادة ربط"
-        case "error": return "تعذّر التحديث"
+        case "cached": return "آخر بيانات محفوظة"
+        case "pending": return "بانتظار التحديث"
+        case "error": return "آخر بيانات محفوظة"
         default: return connected ? "متصل" : "غير مربوط"
         }
     }
@@ -116,7 +152,7 @@ struct Account: Identifiable, Codable, Hashable {
 
     enum CodingKeys: String, CodingKey {
         case id, platform, handle, url, displayName, avatarUrl, isVerified, followers, following
-        case likes, posts, views, videoLikes, comments, shares, fetchedVideos, posts24h, views24h
+        case likes, posts, views, videoLikes, comments, shares, fetchedVideos, posts24h, views24h, posts7d, weeklyViews
         case avgViews, coverage, connected, publicStats, status, error, lastSyncedAt, createdAt
     }
 
@@ -140,6 +176,8 @@ struct Account: Identifiable, Codable, Hashable {
         fetchedVideos = c.flexInt(.fetchedVideos)
         posts24h = c.flexInt(.posts24h)
         views24h = c.flexInt64(.views24h)
+        posts7d = c.flexInt(.posts7d)
+        weeklyViews = c.flexInt64(.weeklyViews)
         avgViews = c.flexInt64(.avgViews)
         coverage = c.flexDouble(.coverage)
         connected = c.flexBool(.connected)
@@ -154,6 +192,7 @@ struct Account: Identifiable, Codable, Hashable {
          isVerified: Bool = false, followers: Int64 = 0, following: Int64 = 0, likes: Int64 = 0,
          posts: Int = 0, views: Int64 = 0, videoLikes: Int64 = 0, comments: Int64 = 0, shares: Int64 = 0,
          fetchedVideos: Int = 0, posts24h: Int = 0, views24h: Int64 = 0,
+         posts7d: Int = 0, weeklyViews: Int64 = 0,
          avgViews: Int64 = 0, coverage: Double = 1, connected: Bool = true,
          publicStats: Bool = false,
          status: String = "ok", error: String? = nil, lastSyncedAt: String? = nil, createdAt: String = "") {
@@ -175,6 +214,8 @@ struct Account: Identifiable, Codable, Hashable {
         self.fetchedVideos = fetchedVideos
         self.posts24h = posts24h
         self.views24h = views24h
+        self.posts7d = posts7d
+        self.weeklyViews = weeklyViews
         self.avgViews = avgViews
         self.coverage = coverage
         self.connected = connected
@@ -246,15 +287,22 @@ struct Summary: Codable, Hashable {
     var shares: Int64
     var posts24h: Int
     var views24h: Int64
+    var posts7d: Int
+    var weeklyViews: Int64
     var avgViews: Int64
     var lastSyncedAt: String?
+
+    var weeklyScore: Int {
+        WeeklyScore.value(for: weeklyViews)
+    }
 
     static let empty = Summary(accounts: 0, connected: 0, posts: 0, views: 0, likes: 0,
                                comments: 0, shares: 0, posts24h: 0, views24h: 0,
                                avgViews: 0, lastSyncedAt: nil)
 
     enum CodingKeys: String, CodingKey {
-        case accounts, connected, posts, views, likes, comments, shares, posts24h, views24h, avgViews, lastSyncedAt
+        case accounts, connected, posts, views, likes, comments, shares, posts24h, views24h
+        case posts7d, weeklyViews, avgViews, lastSyncedAt
     }
 
     init(from decoder: Decoder) throws {
@@ -268,13 +316,15 @@ struct Summary: Codable, Hashable {
         shares = c.flexInt64(.shares)
         posts24h = c.flexInt(.posts24h)
         views24h = c.flexInt64(.views24h)
+        posts7d = c.flexInt(.posts7d)
+        weeklyViews = c.flexInt64(.weeklyViews)
         avgViews = c.flexInt64(.avgViews)
         lastSyncedAt = c.flexStringOrNil(.lastSyncedAt)
     }
 
     init(accounts: Int, connected: Int, posts: Int, views: Int64, likes: Int64,
          comments: Int64, shares: Int64, posts24h: Int, views24h: Int64,
-         avgViews: Int64, lastSyncedAt: String?) {
+         avgViews: Int64, lastSyncedAt: String?, posts7d: Int = 0, weeklyViews: Int64 = 0) {
         self.accounts = accounts
         self.connected = connected
         self.posts = posts
@@ -284,6 +334,8 @@ struct Summary: Codable, Hashable {
         self.shares = shares
         self.posts24h = posts24h
         self.views24h = views24h
+        self.posts7d = posts7d
+        self.weeklyViews = weeklyViews
         self.avgViews = avgViews
         self.lastSyncedAt = lastSyncedAt
     }
@@ -296,6 +348,8 @@ struct Summary: Codable, Hashable {
         let shares = accounts.reduce(Int64(0)) { $0 + $1.shares }
         let posts24h = accounts.reduce(0) { $0 + $1.posts24h }
         let views24h = accounts.reduce(Int64(0)) { $0 + $1.views24h }
+        let posts7d = accounts.reduce(0) { $0 + $1.posts7d }
+        let weeklyViews = accounts.reduce(Int64(0)) { $0 + $1.weeklyViews }
         let synced = accounts.compactMap { $0.lastSyncedAt }.sorted().last
         return Summary(
             accounts: accounts.count,
@@ -308,7 +362,9 @@ struct Summary: Codable, Hashable {
             posts24h: posts24h,
             views24h: views24h,
             avgViews: posts > 0 ? views / Int64(posts) : 0,
-            lastSyncedAt: synced
+            lastSyncedAt: synced,
+            posts7d: posts7d,
+            weeklyViews: weeklyViews
         )
     }
 }

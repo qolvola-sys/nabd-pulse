@@ -11,11 +11,20 @@ enum DirectTikTokError: LocalizedError {
         case .invalidHandle:
             return "رابط الحساب غير صالح"
         case .notFound:
-            return "الحساب غير موجود أو خاص على TikTok"
+            return "لم نجد هذا الحساب العلني على TikTok"
         case .blocked:
-            return "تعذّر جلب البيانات العامة من TikTok الآن. أعد المحاولة بعد قليل"
+            return "TikTok مشغول مؤقتاً — ستُحدَّث الإحصاءات تلقائياً"
         case .badResponse:
-            return "رد غير متوقع من TikTok"
+            return "TikTok لم يُرجع إحصاءات جديدة — ستُحدَّث تلقائياً"
+        }
+    }
+
+    var isTemporary: Bool {
+        switch self {
+        case .blocked, .badResponse:
+            return true
+        case .invalidHandle, .notFound:
+            return false
         }
     }
 }
@@ -29,6 +38,10 @@ struct DirectTikTokResult {
 /// - الملف الشخصي: المتابعون، الإعجابات، عدد المنشورات.
 /// - صفحة embed: آخر المنشورات مع عدد مشاهدات كل منشور.
 /// - وقت النشر يُستخرج من معرّف الفيديو (Snowflake ID).
+///
+/// TikTok يفضل أن يبدأ الطلب بزيارة الصفحة الرئيسية حتى يحصل التطبيق على
+/// كوكيز ttwid. نستخدم مخزن كوكيز URLSession نفسه، ونعيد تسخينه عند الحاجة،
+/// ثم نجرّب دومينات بديلة إذا رفض أحد الدومينات الطلب.
 final class DirectTikTokService {
     static let shared = DirectTikTokService()
 
@@ -36,10 +49,54 @@ final class DirectTikTokService {
         "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 " +
         "(KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"
     private let daySeconds = 24 * 60 * 60
-    private var warmedCookies = false
+    private let weekSeconds = 7 * 24 * 60 * 60
+    private let cookieTTL: TimeInterval = 45 * 60
+    private let minimumRequestGap: TimeInterval = 0.55
+
+    private let session: URLSession
+    private var cookiesAt = Date.distantPast
     private var lastRequestAt = Date.distantPast
 
-    private init() {}
+    private let homeURL = "https://www.tiktok.com/?lang=en"
+    private let profileHosts = ["www.tiktok.com", "us.tiktok.com"]
+
+    private enum PageKind: Equatable {
+        case home
+        case profile
+        case embed
+
+        var accept: String {
+            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+        }
+
+        var fetchDestination: String {
+            switch self {
+            case .embed: return "iframe"
+            default: return "document"
+            }
+        }
+
+        var fetchSite: String {
+            switch self {
+            case .home: return "none"
+            default: return "same-origin"
+            }
+        }
+    }
+
+    private init() {
+        HTTPCookieStorage.shared.cookieAcceptPolicy = .always
+
+        let configuration = URLSessionConfiguration.default
+        configuration.timeoutIntervalForRequest = 25
+        configuration.timeoutIntervalForResource = 32
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        configuration.httpCookieStorage = HTTPCookieStorage.shared
+        configuration.httpShouldSetCookies = true
+        configuration.httpCookieAcceptPolicy = .always
+        configuration.waitsForConnectivity = false
+        session = URLSession(configuration: configuration)
+    }
 
     func fetch(handle rawHandle: String, knownPosts: Int = 0, createdAt: String? = nil) async throws -> DirectTikTokResult {
         let handle = rawHandle
@@ -48,47 +105,138 @@ final class DirectTikTokService {
             .lowercased()
         guard !handle.isEmpty else { throw DirectTikTokError.invalidHandle }
 
-        do {
-            return try await fetchOnce(handle: handle, knownPosts: knownPosts, createdAt: createdAt)
-        } catch DirectTikTokError.blocked {
-            // محاولة أخيرة بعد تحديث الكوكيز
-            try? await Task.sleep(nanoseconds: 1_800_000_000)
-            warmedCookies = false
-            return try await fetchOnce(handle: handle, knownPosts: knownPosts, createdAt: createdAt)
+        var lastError: DirectTikTokError = .blocked
+        var partial: DirectTikTokResult?
+        for attempt in 0..<2 {
+            do {
+                let result = try await fetchOnce(
+                    handle: handle,
+                    knownPosts: knownPosts,
+                    createdAt: createdAt,
+                    refreshedCookies: attempt > 0
+                )
+                if !result.videos.isEmpty || attempt == 1 {
+                    return result
+                }
+                // وصلنا لبيانات البروفايل فقط. نعيد المحاولة بكوكيز جديدة قبل الاعتماد عليها.
+                partial = result
+                lastError = .blocked
+            } catch let error as DirectTikTokError {
+                if !error.isTemporary {
+                    if let partial { return partial }
+                    throw error
+                }
+                lastError = error
+            } catch {
+                lastError = .blocked
+            }
+
+            if attempt == 0 {
+                // مهلة قصيرة ثم نعيد المحاولة بكوكيز جديدة.
+                try? await Task.sleep(nanoseconds: 1_100_000_000)
+            }
         }
+        if let partial { return partial }
+        throw lastError
     }
 
-    private func fetchOnce(handle: String, knownPosts: Int, createdAt: String?) async throws -> DirectTikTokResult {
-        await warmCookiesIfNeeded()
+    private func fetchOnce(
+        handle: String,
+        knownPosts: Int,
+        createdAt: String?,
+        refreshedCookies: Bool
+    ) async throws -> DirectTikTokResult {
+        await warmCookiesIfNeeded(force: refreshedCookies)
 
         var profileInfo: [String: Any]?
+        var profileNotFound = false
         var profileBlocked = false
-        do {
-            let html = try await loadHTML("https://www.tiktok.com/@\(handle)?lang=en")
-            profileInfo = try parseProfile(html)
-        } catch DirectTikTokError.notFound {
-            throw DirectTikTokError.notFound
-        } catch {
-            profileBlocked = true
+        let profiles = refreshedCookies ? profileHosts : [profileHosts[0]]
+
+        for host in profiles {
+            do {
+                let html = try await loadHTML(
+                    "https://\(host)/@\(handle)?lang=en",
+                    kind: .profile
+                )
+                profileInfo = try parseProfile(html)
+                break
+            } catch let error as DirectTikTokError {
+                if case .notFound = error {
+                    profileNotFound = true
+                    break
+                }
+                profileBlocked = true
+            } catch {
+                profileBlocked = true
+            }
         }
 
-        guard let embedHTML = try? await loadHTML("https://www.tiktok.com/embed/@\(handle)"),
-              let embedData = parseEmbed(embedHTML) else {
-            if profileBlocked { throw DirectTikTokError.blocked }
-            throw DirectTikTokError.badResponse
+        var embedData: [String: Any]?
+        var embedNotFound = false
+        var embedBlocked = false
+        let hosts = refreshedCookies
+            ? ["us.tiktok.com", "www.tiktokv.com", "www.tiktok.com"]
+            : ["www.tiktok.com", "t.tiktok.com"]
+
+        for host in hosts {
+            do {
+                let html = try await loadHTML(
+                    "https://\(host)/embed/@\(handle)",
+                    kind: .embed
+                )
+                if let parsed = parseEmbed(html) {
+                    embedData = parsed
+                    break
+                }
+                embedBlocked = true
+            } catch let error as DirectTikTokError {
+                if case .notFound = error {
+                    embedNotFound = true
+                } else {
+                    embedBlocked = true
+                }
+            } catch {
+                embedBlocked = true
+            }
         }
 
-        let embedUser = embedData["userInfo"] as? [String: Any] ?? [:]
-        if profileInfo == nil && (embedUser["uniqueId"] as? String ?? "").isEmpty {
-            throw DirectTikTokError.notFound
+        if embedData == nil && profileInfo == nil {
+            if profileNotFound && embedNotFound && !profileBlocked && !embedBlocked {
+                throw DirectTikTokError.notFound
+            }
+            throw DirectTikTokError.blocked
         }
 
+        return try makeResult(
+            handle: handle,
+            knownPosts: knownPosts,
+            createdAt: createdAt,
+            profileInfo: profileInfo,
+            embedData: embedData
+        )
+    }
+
+    private func makeResult(
+        handle: String,
+        knownPosts: Int,
+        createdAt: String?,
+        profileInfo: [String: Any]?,
+        embedData: [String: Any]?
+    ) throws -> DirectTikTokResult {
+        let embedUser = embedData?["userInfo"] as? [String: Any] ?? [:]
         let profileUser = profileInfo?["user"] as? [String: Any] ?? [:]
         let profileStats = profileInfo?["stats"] as? [String: Any] ?? [:]
 
+        let embedHandle = firstString(embedUser["uniqueId"]) ?? ""
+        let profileHandle = firstString(profileUser["uniqueId"]) ?? ""
+        if embedHandle.isEmpty && profileHandle.isEmpty {
+            throw DirectTikTokError.notFound
+        }
+
         let displayName = firstString(
             profileUser["nickname"], embedUser["nickname"], handle
-        )
+        ) ?? handle
         let avatar = firstString(
             profileUser["avatarLarger"], profileUser["avatarMedium"], profileUser["avatarThumb"],
             embedUser["avatarThumbUrl"]
@@ -96,10 +244,12 @@ final class DirectTikTokService {
         let verified = firstBool(profileUser["verified"], embedUser["verified"])
         let followers = firstInt64(profileStats["followerCount"], embedUser["followerCount"]) ?? 0
         let following = firstInt64(profileStats["followingCount"], embedUser["followingCount"]) ?? 0
-        let heartCount = firstInt64(profileStats["heartCount"], embedUser["heartCount"]) ?? 0
+        let heartCount = firstInt64(
+            profileStats["heartCount"], profileStats["heart"], embedUser["heartCount"]
+        ) ?? 0
         let totalPosts = firstInt(profileStats["videoCount"]) ?? (knownPosts > 0 ? knownPosts : 0)
 
-        let rawVideos = embedData["videoList"] as? [[String: Any]] ?? []
+        let rawVideos = embedData?["videoList"] as? [[String: Any]] ?? []
         var seen = Set<String>()
         var videos: [VideoItem] = []
         for raw in rawVideos {
@@ -120,15 +270,19 @@ final class DirectTikTokService {
         }
         videos.sort { $0.createTime > $1.createTime }
 
-        let cutoff = Int(Date().timeIntervalSince1970) - daySeconds
-        let recent = videos.filter { $0.createTime >= cutoff }
+        let now = Int(Date().timeIntervalSince1970)
+        let cutoff24h = now - daySeconds
+        let cutoff7d = now - weekSeconds
+        let recent = videos.filter { $0.createTime >= cutoff24h }
+        let weekly = videos.filter { $0.createTime >= cutoff7d }
         let views24h = recent.reduce(Int64(0)) { $0 + $1.views }
+        let weeklyViews = weekly.reduce(Int64(0)) { $0 + $1.views }
         let totalViews = videos.reduce(Int64(0)) { $0 + $1.views }
 
         let account = Account(
             id: "direct-\(handle)",
             handle: handle,
-            displayName: displayName ?? handle,
+            displayName: displayName,
             url: "https://www.tiktok.com/@\(handle)",
             avatarUrl: avatar,
             isVerified: verified,
@@ -143,6 +297,8 @@ final class DirectTikTokService {
             fetchedVideos: videos.count,
             posts24h: recent.count,
             views24h: views24h,
+            posts7d: weekly.count,
+            weeklyViews: weeklyViews,
             avgViews: videos.isEmpty ? 0 : totalViews / Int64(videos.count),
             coverage: totalPosts > 0 ? min(1, Double(videos.count) / Double(totalPosts)) : (videos.isEmpty ? 0 : 1),
             connected: false,
@@ -156,37 +312,83 @@ final class DirectTikTokService {
         return DirectTikTokResult(account: account, videos: videos)
     }
 
-    // MARK: - الشبكة
+    // MARK: - الشبكة والكوكيز
 
-    private func warmCookiesIfNeeded() async {
-        guard !warmedCookies else { return }
-        warmedCookies = true
-        _ = try? await loadHTML("https://www.tiktok.com/", allowFailure: true)
+    private func warmCookiesIfNeeded(force: Bool = false) async {
+        if !force, Date().timeIntervalSince(cookiesAt) < cookieTTL {
+            return
+        }
+
+        if force {
+            clearTikTokCookies()
+        }
+
+        // زيارة الصفحة الرئيسية تمنح ttwid وغيره من كوكيز الحماية.
+        _ = try? await loadHTML(homeURL, kind: .home, allowFailure: true)
+        cookiesAt = Date()
     }
 
-    private func loadHTML(_ urlString: String, allowFailure: Bool = false) async throws -> String {
+    private func clearTikTokCookies() {
+        for cookie in HTTPCookieStorage.shared.cookies ?? [] where cookie.domain.contains("tiktok") {
+            HTTPCookieStorage.shared.deleteCookie(cookie)
+        }
+    }
+
+    @discardableResult
+    private func loadHTML(
+        _ urlString: String,
+        kind: PageKind,
+        allowFailure: Bool = false
+    ) async throws -> String {
         guard let url = URL(string: urlString) else { throw DirectTikTokError.invalidHandle }
+
         let elapsed = Date().timeIntervalSince(lastRequestAt)
-        if elapsed < 0.65 {
-            try? await Task.sleep(nanoseconds: UInt64((0.65 - elapsed) * 1_000_000_000))
+        if elapsed < minimumRequestGap {
+            let delay = UInt64((minimumRequestGap - elapsed) * 1_000_000_000)
+            try? await Task.sleep(nanoseconds: delay)
         }
         lastRequestAt = Date()
-        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 30)
+
+        var request = URLRequest(
+            url: url,
+            cachePolicy: .reloadIgnoringLocalCacheData,
+            timeoutInterval: 25
+        )
         request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
         request.setValue("en-US,en;q=0.9", forHTTPHeaderField: "Accept-Language")
-        request.setValue("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", forHTTPHeaderField: "Accept")
-        request.setValue("https://www.tiktok.com/", forHTTPHeaderField: "Referer")
+        request.setValue(kind.accept, forHTTPHeaderField: "Accept")
+        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+        request.setValue("1", forHTTPHeaderField: "Upgrade-Insecure-Requests")
+        request.setValue(kind.fetchDestination, forHTTPHeaderField: "Sec-Fetch-Dest")
+        request.setValue("navigate", forHTTPHeaderField: "Sec-Fetch-Mode")
+        request.setValue(kind.fetchSite, forHTTPHeaderField: "Sec-Fetch-Site")
+        if kind != .home {
+            request.setValue("https://www.tiktok.com/", forHTTPHeaderField: "Referer")
+        }
 
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            let status = (response as? HTTPURLResponse)?.statusCode ?? 200
-            if status == 400 || status == 404 { throw DirectTikTokError.notFound }
-            if status >= 400 {
+            let (data, response) = try await session.data(for: request)
+            guard let http = response as? HTTPURLResponse else {
+                throw DirectTikTokError.badResponse
+            }
+
+            switch http.statusCode {
+            case 200..<300:
+                let html = String(decoding: data, as: UTF8.self)
+                if data.count < 80 || html.contains("overload-protect triggered") {
+                    if allowFailure { return "" }
+                    throw DirectTikTokError.blocked
+                }
+                return html
+            case 404:
+                if allowFailure { return "" }
+                throw DirectTikTokError.notFound
+            default:
                 if allowFailure { return "" }
                 throw DirectTikTokError.blocked
             }
-            return String(decoding: data, as: UTF8.self)
         } catch let error as DirectTikTokError {
+            if allowFailure { return "" }
             throw error
         } catch {
             if allowFailure { return "" }
@@ -204,7 +406,9 @@ final class DirectTikTokService {
         }
         let statusCode = firstInt(detail["statusCode"]) ?? 0
         if statusCode != 0 { throw DirectTikTokError.notFound }
-        guard let info = detail["userInfo"] as? [String: Any] else {
+        guard let info = detail["userInfo"] as? [String: Any],
+              let user = info["user"] as? [String: Any],
+              !(firstString(user["uniqueId"]) ?? "").isEmpty else {
             throw DirectTikTokError.notFound
         }
         return info
@@ -221,11 +425,22 @@ final class DirectTikTokService {
 
     private func scriptJSON(in html: String, id: String) -> [String: Any]? {
         let marker = "<script id=\"\(id)\" type=\"application/json\">"
-        guard let start = html.range(of: marker),
-              let end = html.range(of: "</script>", range: start.upperBound..<html.endIndex) else {
-            return nil
+        if let start = html.range(of: marker),
+           let end = html.range(of: "</script>", range: start.upperBound..<html.endIndex) {
+            let raw = String(html[start.upperBound..<end.lowerBound])
+            if let object = (try? JSONSerialization.jsonObject(with: Data(raw.utf8))) as? [String: Any] {
+                return object
+            }
         }
-        let raw = String(html[start.upperBound..<end.lowerBound])
+
+        // بعض النسخ تغيّر ترتيب خصائص وسم script.
+        let escaped = NSRegularExpression.escapedPattern(for: id)
+        let pattern = #"<script[^>]*id="\#(escaped)"[^>]*>([\s\S]*?)</script>"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let text = html as NSString
+        guard let match = regex.firstMatch(in: html, range: NSRange(location: 0, length: text.length)),
+              match.numberOfRanges > 1 else { return nil }
+        let raw = text.substring(with: match.range(at: 1))
         return (try? JSONSerialization.jsonObject(with: Data(raw.utf8))) as? [String: Any]
     }
 

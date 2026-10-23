@@ -199,24 +199,27 @@ struct AddAccountsView: View {
     }
 
     private func resultCard(_ result: AddAccountsResponse) -> some View {
-        let successCount = result.created.filter { $0.status != "error" }.count
+        let addedCount = result.created.count
+        let readyCount = result.created.filter { $0.status != "pending" && $0.status != "error" }.count
         return VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
-                Image(systemName: successCount > 0 ? "checkmark.circle.fill" : "xmark.octagon.fill")
-                    .foregroundColor(successCount > 0 ? Theme.green : Theme.red)
-                Text(successCount > 0 ? "تمت الإضافة" : "تعذّرت الإضافة")
+                Image(systemName: addedCount > 0 ? "checkmark.circle.fill" : "info.circle.fill")
+                    .foregroundColor(addedCount > 0 ? Theme.green : Theme.gold)
+                Text(addedCount > 0 ? "تمت الإضافة" : "لم تتم الإضافة")
                     .font(.system(size: 13, weight: .bold))
                     .foregroundColor(Theme.text)
                 Spacer()
-                Text("\(successCount) جديد")
+                Text("\(addedCount) جديد")
                     .font(.system(size: 10.5, weight: .bold))
-                    .foregroundColor(successCount > 0 ? Theme.green : Theme.red)
+                    .foregroundColor(addedCount > 0 ? Theme.green : Theme.gold)
             }
 
             if !result.created.isEmpty {
                 Text(store.useServer
                      ? "الخطوة التالية: اربط كل حساب بتسجيل الدخول إلى TikTok مرة واحدة."
-                     : "تم جلب المنشورات ومشاهدات آخر ٢٤ ساعة مباشرة من TikTok.")
+                     : (readyCount > 0
+                        ? "تم جلب المنشورات ومشاهدات آخر ٢٤ ساعة والتقييم الأسبوعي مباشرة من TikTok."
+                        : "أُضيفت الحسابات وستُحدَّث أرقامها تلقائياً عند توفر اتصال TikTok."))
                     .font(.system(size: 11))
                     .foregroundColor(Theme.textSecondary)
                     .lineSpacing(3)
@@ -247,14 +250,23 @@ struct AddAccountsView: View {
                                         .background(Capsule().fill(Theme.cyan))
                                 }
                                 .disabled(store.connectingAccountID != nil)
-                            } else {
+                            } else if account.status == "pending" {
                                 VStack(alignment: .trailing, spacing: 1) {
-                                    Text("\(Num.compact(account.views24h)) مشاهدة")
-                                        .font(.system(size: 10.5, weight: .bold, design: .rounded))
-                                        .foregroundColor(account.status == "error" ? Theme.red : Theme.cyan)
-                                    Text("\(account.posts24h) منشور ٢٤س")
+                                    Text("بانتظار التحديث")
+                                        .font(.system(size: 10.5, weight: .bold))
+                                        .foregroundColor(Theme.gold)
+                                    Text("سيُحدَّث تلقائياً")
                                         .font(.system(size: 8.5))
                                         .foregroundColor(Theme.textTertiary)
+                                }
+                            } else {
+                                VStack(alignment: .trailing, spacing: 1) {
+                                    Text("\(Num.compact(account.views24h)) مشاهدة ٢٤س")
+                                        .font(.system(size: 10.5, weight: .bold, design: .rounded))
+                                        .foregroundColor(Theme.cyan)
+                                    Text("أسبوعياً \(Num.compact(account.weeklyViews)) · \(account.weeklyScore)/100")
+                                        .font(.system(size: 8.5, weight: .medium, design: .rounded))
+                                        .foregroundColor(WeeklyScoreStyle.color(for: account.weeklyScore))
                                 }
                             }
                         }
@@ -319,7 +331,7 @@ struct AddAccountsView: View {
                 .foregroundColor(Theme.textSecondary)
             Text(store.useServer
                  ? "نسجّل دخول كل حساب مرة واحدة عبر TikTok Display API الرسمي، ثم يبقى مربوطاً ويُحدّث نفسه تلقائياً. لا نطلب كلمة المرور."
-                 : "نقرأ الصفحة العامة لكل حساب على TikTok لعدد المنشورات والمتابعين والإعجابات، ثم صفحة المنشورات لإجمالي مشاهدات ما نُشر خلال آخر ٢٤ ساعة. لا حاجة لتسجيل الدخول، والأرقام العامة قد تكون مقرّبة.")
+                 : "نقرأ الصفحة العامة لكل حساب على TikTok لعدد المنشورات والمتابعين والإعجابات، ثم صفحة المنشورات لحساب مشاهدات آخر ٢٤ ساعة والتقييم الأسبوعي من 100. لا حاجة لتسجيل الدخول أو VPN، والأرقام العامة قد تكون مقرّبة.")
                 .font(.system(size: 11))
                 .foregroundColor(Theme.textTertiary)
                 .lineSpacing(4)
@@ -340,10 +352,8 @@ struct AddAccountsView: View {
                 result = response
                 text = ""
             }
-        } else {
-            errorText = store.useServer
-                ? "لم نستطع إضافة الحسابات. تأكد من اتصال الخادم ثم أعد المحاولة."
-                : "تعذّر جلب البيانات من TikTok. تحقق من الرابط واتصالك بالإنترنت ثم أعد المحاولة."
+        } else if store.useServer {
+            errorText = "لم نستطع إضافة الحسابات. تأكد من اتصال الخادم ثم أعد المحاولة."
         }
     }
 

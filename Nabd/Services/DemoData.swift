@@ -67,6 +67,8 @@ enum DemoData {
             let shares = Int64(Double(views) * (0.002 + rng.next() * 0.01))
             let posts24h = rng.int(0..<5)
             let views24h = Int64(Double(posts24h) * avg * (0.45 + rng.next() * 1.4))
+            let posts7d = max(posts24h, rng.int(3..<12))
+            let weeklyViews = max(views24h, Int64(Double(avg) * Double(posts7d) * (0.8 + rng.next() * 1.5)))
             let minutesAgo = rng.int(0..<220)
             let synced = iso.string(from: Date().addingTimeInterval(-Double(minutesAgo) * 60))
 
@@ -88,6 +90,8 @@ enum DemoData {
                 fetchedVideos: videosCount,
                 posts24h: posts24h,
                 views24h: views24h,
+                posts7d: posts7d,
+                weeklyViews: weeklyViews,
                 avgViews: views / Int64(max(videosCount, 1)),
                 coverage: Double(videosCount) / Double(posts),
                 connected: true,

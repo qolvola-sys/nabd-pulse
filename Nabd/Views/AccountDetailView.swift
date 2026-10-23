@@ -10,7 +10,6 @@ struct AccountDetailView: View {
     @State private var detail: Account?
     @State private var videos: [VideoItem] = []
     @State private var isLoading = true
-    @State private var error: String?
     @State private var confirmDelete = false
     @State private var isSyncing = false
 
@@ -28,6 +27,7 @@ struct AccountDetailView: View {
                 VStack(spacing: 18) {
                     profileHeader
                     last24hCard
+                    weeklyCard
                     if !current.connected && !current.publicStats {
                         connectCard
                     }
@@ -219,6 +219,71 @@ struct AccountDetailView: View {
         .frame(maxWidth: .infinity)
     }
 
+    // MARK: - التقييم الأسبوعي
+
+    private var weeklyCard: some View {
+        VStack(alignment: .leading, spacing: 13) {
+            HStack(spacing: 7) {
+                Image(systemName: "calendar.badge.clock")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundColor(Theme.violet)
+                Text("التقييم الأسبوعي")
+                    .font(.system(size: 12.5, weight: .bold))
+                    .foregroundColor(Theme.text)
+                Spacer()
+                WeeklyScoreBadge(score: current.weeklyScore)
+            }
+
+            HStack(alignment: .center, spacing: 16) {
+                WeeklyScoreRing(score: current.weeklyScore, size: 84, lineWidth: 7)
+
+                VStack(alignment: .leading, spacing: 9) {
+                    weeklyStat(
+                        icon: "play.fill",
+                        tint: Theme.violet,
+                        value: Num.compact(current.weeklyViews),
+                        label: "مشاهدة خلال ٧ أيام"
+                    )
+                    weeklyStat(
+                        icon: "square.stack.3d.up.fill",
+                        tint: Theme.cyan,
+                        value: Num.full(Int64(current.posts7d)),
+                        label: "منشور خلال ٧ أيام"
+                    )
+                    Text(WeeklyScore.label(for: current.weeklyScore))
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(WeeklyScoreStyle.color(for: current.weeklyScore))
+                }
+
+                Spacer(minLength: 0)
+            }
+
+            Text("التقييم من 100 يعتمد على مجموع مشاهدات المنشورات المنشورة خلال آخر ٧ أيام، وليس على عدد المتابعين. تُحسب من المنشورات المتاحة علناً في آخر سحب.")
+                .font(.system(size: 9.5))
+                .foregroundColor(Theme.textTertiary)
+                .lineSpacing(3)
+        }
+        .card(padding: 15)
+    }
+
+    private func weeklyStat(icon: String, tint: Color, value: String, label: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.system(size: 9.5, weight: .bold))
+                .foregroundColor(tint)
+                .frame(width: 22, height: 22)
+                .background(Circle().fill(tint.opacity(0.12)))
+            VStack(alignment: .leading, spacing: 1) {
+                Text(value)
+                    .font(.system(size: 13.5, weight: .bold, design: .rounded))
+                    .foregroundColor(Theme.text)
+                Text(label)
+                    .font(.system(size: 9.5))
+                    .foregroundColor(Theme.textTertiary)
+            }
+        }
+    }
+
     private var connectCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 9) {
@@ -347,7 +412,7 @@ struct AccountDetailView: View {
                         Text("لا توجد مشاهدات عامة متاحة")
                             .font(.system(size: 12, weight: .bold))
                             .foregroundColor(Theme.text)
-                        Text("قد يكون الحساب بلا منشورات عامة، أو أن TikTok لم يُرجع المشاهدات الآن. عدد المنشورات والمتابعون محدّثون من البيانات العامة.")
+                        Text("قد يكون الحساب بلا منشورات عامة، أو أن الأرقام ستُحدَّث في المزامنة القادمة. عدد المنشورات والمتابعون محدّثون من البيانات العامة.")
                             .font(.system(size: 10.5))
                             .foregroundColor(Theme.textSecondary)
                             .lineSpacing(3)
@@ -386,24 +451,13 @@ struct AccountDetailView: View {
                         }
                     }
                 }
-            } else if let error {
-                EmptyStateView(
-                    icon: "wifi.exclamationmark",
-                    title: "تعذّر تحميل المنشورات",
-                    message: error,
-                    actionTitle: "إعادة المحاولة",
-                    action: { Task { await load() } }
-                )
-                .card(padding: 4)
             } else if videos.isEmpty {
                 EmptyStateView(
-                    icon: "video.slash",
-                    title: "لا توجد منشورات",
-                    message: current.publicStats
-                        ? "لم يُرجع TikTok منشورات عامة لهذا الحساب الآن."
-                        : (current.connected
-                           ? "لم يُرجع TikTok أي منشور عام لهذا الحساب."
-                           : "المنشورات الفردية تظهر بعد ربط الحساب.")
+                    icon: "video.badge.clock",
+                    title: "لا توجد منشورات محفوظة بعد",
+                    message: "اضغط تحديث لجلب أحدث المنشورات من TikTok. تبقى الإحصاءات السابقة محفوظة إذا كان TikTok مشغولاً.",
+                    actionTitle: "تحديث الآن",
+                    action: { Task { await load(forceSync: true) } }
                 )
                 .card(padding: 4)
             } else {
@@ -480,13 +534,12 @@ struct AccountDetailView: View {
             isSyncing = false
         }
         isLoading = videos.isEmpty
-        error = nil
         do {
             let result = try await store.detail(for: current)
             detail = result.0
             videos = result.1
         } catch {
-            self.error = error.localizedDescription
+            // نحتفظ بالمنشورات والإحصاءات المحفوظة بدل عرض رسالة خطأ.
         }
         isLoading = false
     }

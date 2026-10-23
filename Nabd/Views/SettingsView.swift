@@ -73,7 +73,7 @@ struct SettingsView: View {
                 icon: "play.rectangle.fill",
                 tint: Theme.pink,
                 title: "TikTok مباشرة",
-                subtitle: "إحصاءات عامة حقيقية بدون خادم أو تسجيل دخول — تشمل آخر ٢٤ ساعة.",
+                subtitle: "إحصاءات عامة حقيقية بدون خادم أو تسجيل دخول — آخر ٢٤ ساعة وتقييم أسبوعي.",
                 selected: !store.useServer
             ) {
                 report = nil
@@ -448,7 +448,7 @@ struct SettingsView: View {
                 .foregroundColor(Theme.textTertiary)
                 .lineSpacing(4)
 
-            Text("آخر ٢٤ ساعة = المنشورات التي نُشرت خلال ٢٤ ساعة الماضية ومجموع مشاهداتها من البيانات العامة. قد تكون الأرقام مقرّبة، وقد تنقص إذا نشر الحساب أكثر من عشرة منشورات في اليوم.")
+            Text("آخر ٢٤ ساعة = المنشورات التي نُشرت خلال ٢٤ ساعة الماضية ومجموع مشاهداتها من البيانات العامة. التقييم الأسبوعي من 100 يعتمد على مشاهدات منشورات آخر ٧ أيام. قد تكون الأرقام مقرّبة، وقد تنقص إذا نشر الحساب أكثر من عشرة منشورات في الفترة.")
                 .font(.system(size: 9.5))
                 .foregroundColor(Theme.textTertiary.opacity(0.85))
                 .lineSpacing(3)
@@ -505,7 +505,7 @@ struct SettingsView: View {
             store.showToast("لا توجد حسابات للتصدير", .info)
             return
         }
-        let header = ["المنصة", "الحساب", "الاسم", "الرابط", "المنشورات", "منشورات ٢٤س", "مشاهدات ٢٤س", "المشاهدات", "متوسط المشاهدات", "الإعجابات", "التعليقات", "المشاركات", "المتابعون", "آخر مزامنة"]
+        let header = ["المنصة", "الحساب", "الاسم", "الرابط", "المنشورات", "منشورات ٢٤س", "مشاهدات ٢٤س", "منشورات ٧ أيام", "مشاهدات ٧ أيام", "التقييم الأسبوعي", "المشاهدات", "متوسط المشاهدات", "الإعجابات", "التعليقات", "المشاركات", "المتابعون", "آخر مزامنة"]
         let quote: (String) -> String = { value in
             "\"" + value.replacingOccurrences(of: "\"", with: "\"\"") + "\""
         }
@@ -519,6 +519,9 @@ struct SettingsView: View {
                 String(account.posts),
                 String(account.posts24h),
                 String(account.views24h),
+                String(account.posts7d),
+                String(account.weeklyViews),
+                String(account.weeklyScore),
                 String(account.views),
                 String(account.avgViewsPerPost),
                 String(account.videoLikes),
