@@ -367,8 +367,12 @@ final class DirectTikTokService {
     ) -> Bool {
         if videos.isEmpty { return totalPosts == 0 }
         if allPostsLoaded { return true }
-        if videos.count < 10 { return true }
-        return hasValidTimes && oldestFetched < cutoff
+        // إذا كانت أقدم منشورات محمّلة أقدم من بداية النافذة، فالنافذة مغطاة بالكامل
+        // حتى لو لم نحمّل كل منشورات الحساب.
+        if hasValidTimes && oldestFetched < cutoff { return true }
+        // عدد المنشورات الكلي غير معروف، لكن كل ما ظهر علناً محمّل.
+        if totalPosts == 0 && videos.count < 10 { return true }
+        return false
     }
 
     // MARK: - الشبكة والكوكيز
