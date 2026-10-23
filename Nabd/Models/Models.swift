@@ -231,7 +231,7 @@ struct Account: Identifiable, Codable, Hashable {
          fetchedVideos: Int = 0, posts24h: Int = 0, views24h: Int64 = 0,
          posts7d: Int = 0, weeklyViews: Int64 = 0,
          avgViews: Int64 = 0, coverage: Double = 1, connected: Bool = true,
-         publicStats: Bool = false,
+         publicStats: Bool = false, profileExact: Bool = true,
          viewsExact: Bool = true, dailyComplete: Bool = true, dailyViewsExact: Bool = true,
          weeklyComplete: Bool = true, weeklyViewsExact: Bool = true, allPostsLoaded: Bool = false,
          status: String = "ok", error: String? = nil, lastSyncedAt: String? = nil, createdAt: String = "") {
@@ -259,6 +259,7 @@ struct Account: Identifiable, Codable, Hashable {
         self.coverage = coverage
         self.connected = connected
         self.publicStats = publicStats
+        self.profileExact = profileExact
         self.viewsExact = viewsExact
         self.dailyComplete = dailyComplete
         self.dailyViewsExact = dailyViewsExact
