@@ -433,7 +433,7 @@ struct SettingsView: View {
                     Text("نبض")
                         .font(.system(size: 15, weight: .bold, design: .rounded))
                         .foregroundColor(Theme.text)
-                    Text("تحليلات TikTok لعدة حسابات · 1.0.0")
+                    Text("تحليلات TikTok لعدة حسابات · 1.1.0")
                         .font(.system(size: 10.5))
                         .foregroundColor(Theme.textTertiary)
                 }
