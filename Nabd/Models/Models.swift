@@ -93,6 +93,9 @@ struct Account: Identifiable, Codable, Hashable {
     var coverage: Double
     var connected: Bool
     var publicStats: Bool
+    /// هل إحصاءات الملف (المتابعون/الإعجابات/المنشورات) دقيقة ١٠٠٪؟
+    /// تأتي دقيقة من statsV2، وقد تكون مقرّبة إذا اعتمدنا على embed فقط.
+    var profileExact: Bool
     /// هل مشاهدات المنشورات المحمّلة دقيقة ١٠٠٪؟ TikTok يقرّب المشاهدات العامة
     /// فوق ١٠ آلاف، لذلك نعلّمها بـ ≈ بدل تقديمها كرقم دقيق.
     var viewsExact: Bool
@@ -177,7 +180,7 @@ struct Account: Identifiable, Codable, Hashable {
         case id, platform, handle, url, displayName, avatarUrl, isVerified, followers, following
         case likes, posts, views, videoLikes, comments, shares, fetchedVideos, posts24h, views24h, posts7d, weeklyViews
         case avgViews, coverage, connected, publicStats, status, error, lastSyncedAt, createdAt
-        case viewsExact, dailyComplete, dailyViewsExact, weeklyComplete, weeklyViewsExact, allPostsLoaded
+        case profileExact, viewsExact, dailyComplete, dailyViewsExact, weeklyComplete, weeklyViewsExact, allPostsLoaded
     }
 
     init(from decoder: Decoder) throws {
@@ -206,6 +209,7 @@ struct Account: Identifiable, Codable, Hashable {
         coverage = c.flexDouble(.coverage)
         connected = c.flexBool(.connected)
         publicStats = c.flexBool(.publicStats)
+        profileExact = c.flexBool(.profileExact, default: connected)
         viewsExact = c.flexBool(.viewsExact, default: connected)
         dailyComplete = c.flexBool(.dailyComplete, default: connected)
         dailyViewsExact = c.flexBool(.dailyViewsExact, default: connected && dailyComplete)
@@ -339,6 +343,7 @@ struct Summary: Codable, Hashable {
     var weeklyViews: Int64
     var avgViews: Int64
     var loadedVideos: Int
+    var profileExact: Bool
     var viewsExact: Bool
     var dailyComplete: Bool
     var dailyViewsExact: Bool
@@ -361,7 +366,7 @@ struct Summary: Codable, Hashable {
 
     enum CodingKeys: String, CodingKey {
         case accounts, connected, posts, views, totalLikes, likes, comments, shares, posts24h, views24h
-        case posts7d, weeklyViews, avgViews, loadedVideos, viewsExact, dailyComplete, dailyViewsExact
+        case posts7d, weeklyViews, avgViews, loadedVideos, profileExact, viewsExact, dailyComplete, dailyViewsExact
         case weeklyComplete, weeklyViewsExact, allPostsLoaded, lastSyncedAt
     }
 
@@ -381,6 +386,7 @@ struct Summary: Codable, Hashable {
         weeklyViews = c.flexInt64(.weeklyViews)
         avgViews = c.flexInt64(.avgViews)
         loadedVideos = c.flexInt(.loadedVideos)
+        profileExact = c.flexBool(.profileExact)
         viewsExact = c.flexBool(.viewsExact)
         dailyComplete = c.flexBool(.dailyComplete)
         dailyViewsExact = c.flexBool(.dailyViewsExact)
@@ -393,7 +399,7 @@ struct Summary: Codable, Hashable {
     init(accounts: Int, connected: Int, posts: Int, views: Int64, totalLikes: Int64 = 0,
          likes: Int64, comments: Int64, shares: Int64, posts24h: Int, views24h: Int64,
          avgViews: Int64, lastSyncedAt: String?, posts7d: Int = 0, weeklyViews: Int64 = 0,
-         loadedVideos: Int = 0, viewsExact: Bool = false, dailyComplete: Bool = true,
+         loadedVideos: Int = 0, profileExact: Bool = true, viewsExact: Bool = false, dailyComplete: Bool = true,
          dailyViewsExact: Bool = false, weeklyComplete: Bool = true,
          weeklyViewsExact: Bool = false, allPostsLoaded: Bool = false) {
         self.accounts = accounts
@@ -410,6 +416,7 @@ struct Summary: Codable, Hashable {
         self.weeklyViews = weeklyViews
         self.avgViews = avgViews
         self.loadedVideos = loadedVideos
+        self.profileExact = profileExact
         self.viewsExact = viewsExact
         self.dailyComplete = dailyComplete
         self.dailyViewsExact = dailyViewsExact
@@ -448,6 +455,7 @@ struct Summary: Codable, Hashable {
             posts7d: posts7d,
             weeklyViews: weeklyViews,
             loadedVideos: loadedVideos,
+            profileExact: accounts.allSatisfy { $0.profileExact },
             viewsExact: accounts.allSatisfy { $0.viewsExact },
             dailyComplete: accounts.allSatisfy { $0.dailyComplete },
             dailyViewsExact: accounts.allSatisfy { $0.dailyViewsExact },

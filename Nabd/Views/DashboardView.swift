@@ -19,7 +19,7 @@ struct DashboardView: View {
     }
 
     private var heroExact: Bool {
-        hasViews ? store.summary.viewsExact : true
+        hasViews ? store.summary.viewsExact : store.summary.profileExact
     }
 
     private var heroScopeLabel: String {
@@ -610,7 +610,7 @@ struct DashboardView: View {
             )
             StatCard(
                 title: "المتابعون",
-                value: Num.full(store.totalFollowers),
+                value: Num.maybeApprox(store.totalFollowers, exact: store.summary.profileExact),
                 icon: "person.3.fill",
                 tint: Theme.pink,
                 hint: "مجموع الحسابات"
@@ -626,10 +626,10 @@ struct DashboardView: View {
             } else {
                 StatCard(
                     title: "إجمالي الإعجابات",
-                    value: Num.full(store.summary.totalLikes),
+                    value: Num.maybeApprox(store.summary.totalLikes, exact: store.summary.profileExact),
                     icon: "hand.thumbsup.fill",
                     tint: Theme.gold,
-                    hint: "رقم عام دقيق"
+                    hint: store.summary.profileExact ? "رقم عام دقيق" : "رقم عام مقرّب"
                 )
             }
         }
@@ -688,7 +688,7 @@ struct DashboardView: View {
                     segments: donutSegments,
                     centerValue: hasViews
                         ? Num.maybeApprox(store.summary.views, exact: store.summary.viewsExact)
-                        : Num.full(store.summary.totalLikes),
+                        : Num.maybeApprox(store.summary.totalLikes, exact: store.summary.profileExact),
                     centerCaption: hasViews ? "مشاهدة" : "إعجاب"
                 )
 
@@ -785,7 +785,7 @@ struct DashboardView: View {
                                 VStack(alignment: .trailing, spacing: 2) {
                                     Text(hasViews
                                          ? Num.maybeApprox(account.views, exact: account.viewsExact)
-                                         : Num.full(account.likes))
+                                         : Num.maybeApprox(account.likes, exact: account.profileExact))
                                         .font(.system(size: 13, weight: .bold, design: .rounded))
                                         .foregroundColor(Theme.text)
                                         .lineLimit(1)

@@ -368,7 +368,7 @@ struct AccountDetailView: View {
 
     private var statsGrid: some View {
         LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
-            StatCard(title: "المنشورات", value: Num.full(Int64(current.posts)), icon: "square.stack.3d.up.fill", tint: Theme.cyan)
+            StatCard(title: "المنشورات", value: Num.maybeApprox(Int64(current.posts), exact: current.profileExact), icon: "square.stack.3d.up.fill", tint: Theme.cyan)
             StatCard(
                 title: "المشاهدات",
                 value: current.hasViewData ? Num.maybeApprox(current.views, exact: current.viewsExact) : "—",
@@ -387,7 +387,7 @@ struct AccountDetailView: View {
                 tint: Theme.pink,
                 hint: current.hasViewData && !current.allPostsLoaded ? "للمنشورات المحمّلة" : nil
             )
-            StatCard(title: "المتابعون", value: Num.full(current.followers), icon: "person.3.fill", tint: Theme.gold)
+            StatCard(title: "المتابعون", value: Num.maybeApprox(current.followers, exact: current.profileExact), icon: "person.3.fill", tint: Theme.gold)
         }
     }
 
@@ -397,7 +397,8 @@ struct AccountDetailView: View {
                 icon: "heart.fill",
                 value: current.hasVideoEngagementData ? current.videoLikes : current.likes,
                 label: current.hasVideoEngagementData ? "إعجاب" : "إجمالي الإعجابات",
-                tint: Theme.pink
+                tint: Theme.pink,
+                exact: current.hasVideoEngagementData || current.profileExact
             )
             Rectangle().fill(Theme.borderSoft).frame(width: 1, height: 26)
             if current.hasVideoEngagementData {
@@ -406,21 +407,21 @@ struct AccountDetailView: View {
                 engagementItem(icon: "arrowshape.turn.up.right.fill", value: current.shares, label: "مشاركة", tint: Theme.violet)
                 Rectangle().fill(Theme.borderSoft).frame(width: 1, height: 26)
             } else {
-                engagementItem(icon: "square.stack.3d.up.fill", value: Int64(current.posts), label: "منشور", tint: Theme.cyan)
+                engagementItem(icon: "square.stack.3d.up.fill", value: Int64(current.posts), label: "منشور", tint: Theme.cyan, exact: current.profileExact)
                 Rectangle().fill(Theme.borderSoft).frame(width: 1, height: 26)
             }
-            engagementItem(icon: "person.2.fill", value: current.followers, label: "متابع", tint: Theme.gold)
+            engagementItem(icon: "person.2.fill", value: current.followers, label: "متابع", tint: Theme.gold, exact: current.profileExact)
         }
         .padding(.vertical, 12)
         .card(padding: 0, radius: 18)
     }
 
-    private func engagementItem(icon: String, value: Int64, label: String, tint: Color) -> some View {
+    private func engagementItem(icon: String, value: Int64, label: String, tint: Color, exact: Bool = true) -> some View {
         VStack(spacing: 4) {
             Image(systemName: icon)
                 .font(.system(size: 11))
                 .foregroundColor(tint)
-            Text(Num.full(value))
+            Text(Num.maybeApprox(value, exact: exact))
                 .font(.system(size: 12, weight: .bold, design: .rounded))
                 .foregroundColor(Theme.text)
                 .lineLimit(1)
@@ -444,7 +445,7 @@ struct AccountDetailView: View {
                             .font(.system(size: 12, weight: .bold))
                             .foregroundColor(Theme.text)
                         Spacer()
-                        Text("\(Num.full(Int64(current.fetchedVideos))) من \(Num.full(Int64(current.posts))) منشوراً")
+                        Text("\(Num.full(Int64(current.fetchedVideos))) من \(Num.maybeApprox(Int64(current.posts), exact: current.profileExact)) منشوراً")
                             .font(.system(size: 10.5, weight: .medium, design: .rounded))
                             .foregroundColor(Theme.textSecondary)
                     }

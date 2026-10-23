@@ -376,7 +376,7 @@ struct AccountRow: View {
             HStack(alignment: .center, spacing: 10) {
                 statColumn(value: posts24hText, label: "منشور ٢٤س")
                 statColumn(value: avg24hText, label: "متوسط ٢٤س")
-                statColumn(value: Num.full(account.followers), label: "متابع")
+                statColumn(value: Num.maybeApprox(account.followers, exact: account.profileExact), label: "متابع")
 
                 Spacer(minLength: 2)
 

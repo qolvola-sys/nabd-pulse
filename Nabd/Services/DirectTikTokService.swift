@@ -244,19 +244,19 @@ final class DirectTikTokService {
             embedUser["avatarThumbUrl"]
         )
         let verified = firstBool(profileUser["verified"], embedUser["verified"])
-        let followers = firstInt64(
-            profileStatsV2["followerCount"], profileStats["followerCount"], embedUser["followerCount"]
-        ) ?? 0
-        let following = firstInt64(
-            profileStatsV2["followingCount"], profileStats["followingCount"], embedUser["followingCount"]
-        ) ?? 0
-        let heartCount = firstInt64(
-            profileStatsV2["heartCount"], profileStatsV2["heart"],
-            profileStats["heartCount"], profileStats["heart"], embedUser["heartCount"]
-        ) ?? 0
-        let totalPosts = firstInt(
-            profileStatsV2["videoCount"], profileStats["videoCount"]
-        ) ?? (knownPosts > 0 ? knownPosts : 0)
+        let exactFollowers = firstInt64(profileStatsV2["followerCount"])
+        let exactFollowing = firstInt64(profileStatsV2["followingCount"])
+        let exactHeart = firstInt64(profileStatsV2["heartCount"], profileStatsV2["heart"])
+        let exactPosts = firstInt(profileStatsV2["videoCount"])
+        let profileExact = exactFollowers != nil && exactHeart != nil && exactPosts != nil
+        let followers = exactFollowers
+            ?? firstInt64(profileStats["followerCount"], embedUser["followerCount"]) ?? 0
+        let following = exactFollowing
+            ?? firstInt64(profileStats["followingCount"], embedUser["followingCount"]) ?? 0
+        let heartCount = exactHeart
+            ?? firstInt64(profileStats["heartCount"], profileStats["heart"], embedUser["heartCount"]) ?? 0
+        let totalPosts = exactPosts
+            ?? firstInt(profileStats["videoCount"]) ?? (knownPosts > 0 ? knownPosts : 0)
 
         let rawVideos = embedData?["videoList"] as? [[String: Any]] ?? []
         var seen = Set<String>()
@@ -340,6 +340,7 @@ final class DirectTikTokService {
             coverage: totalPosts > 0 ? min(1, Double(videos.count) / Double(totalPosts)) : (videos.isEmpty ? 0 : 1),
             connected: false,
             publicStats: true,
+            profileExact: profileExact,
             viewsExact: viewsExact,
             dailyComplete: dailyComplete,
             dailyViewsExact: dailyViewsExact,

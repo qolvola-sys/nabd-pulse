@@ -294,6 +294,13 @@ final class AppStore: ObservableObject {
     /// عند نجاح بيانات البروفايل فقط (بدون قائمة المنشورات) نحتفظ بإحصاءات الفيديو السابقة.
     private func preservingVideoStats(in fresh: Account, from old: Account) -> Account {
         var merged = fresh
+        if !merged.profileExact && old.profileExact {
+            merged.profileExact = true
+            merged.followers = old.followers
+            merged.following = old.following
+            merged.likes = old.likes
+            merged.posts = old.posts
+        }
         merged.views = old.views
         merged.avgViews = old.avgViews
         merged.fetchedVideos = old.fetchedVideos
