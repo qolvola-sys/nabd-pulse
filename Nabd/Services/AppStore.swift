@@ -266,7 +266,9 @@ final class AppStore: ObservableObject {
                 fresh.status = "public"
                 fresh.error = nil
                 updated[account.id] = fresh
-                directVideos[account.handle] = result.videos
+                if !result.videos.isEmpty {
+                    directVideos[account.handle] = result.videos
+                }
                 successes += 1
             } catch {
                 // لا نستبدل الأرقام المحفوظة عند تعذّر الاتصال، ولا نعرض خطأ أحمر.
@@ -371,7 +373,9 @@ final class AppStore: ObservableObject {
                     accounts[index] = fresh
                     summary = Summary.make(from: accounts)
                 }
-                directVideos[account.handle] = result.videos
+                if !result.videos.isEmpty {
+                    directVideos[account.handle] = result.videos
+                }
                 saveDirectAccounts()
                 showToast("تم تحديث @\(account.handle)", .success)
                 haptic(.success)
@@ -550,13 +554,18 @@ final class AppStore: ObservableObject {
             if result.videos.isEmpty {
                 fresh = preservingVideoStats(in: fresh, from: account)
             }
-            directVideos[account.handle] = result.videos
+            if !result.videos.isEmpty {
+                directVideos[account.handle] = result.videos
+            }
             saveDirectAccounts()
             if let index = accounts.firstIndex(where: { $0.id == account.id }) {
                 accounts[index] = fresh
                 summary = Summary.make(from: accounts)
             }
-            return (fresh, Array(result.videos.prefix(limit)))
+            let videos = result.videos.isEmpty
+                ? (directVideos[account.handle] ?? [])
+                : result.videos
+            return (fresh, Array(videos.prefix(limit)))
         }
         guard let client else { throw APIError.missingCredentials }
         let response: AccountDetailResponse = try await client.get("/api/accounts/\(account.id)?limit=\(limit)")
