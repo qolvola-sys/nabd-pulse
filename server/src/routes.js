@@ -154,8 +154,8 @@ api.post("/accounts", async (req, res, next) => {
     if (!inputs.length) {
       return res.status(400).json({ error: { code: "empty", message: "أرسل رابطاً واحداً على الأقل" } });
     }
-    if (inputs.length > 100) {
-      return res.status(400).json({ error: { code: "too_many", message: "الحد الأقصى 100 رابط في الطلب الواحد" } });
+    if (inputs.length > 500) {
+      return res.status(400).json({ error: { code: "too_many", message: "الحد الأقصى 500 رابط في الطلب الواحد" } });
     }
 
     const created = [];

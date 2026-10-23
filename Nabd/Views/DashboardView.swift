@@ -484,7 +484,7 @@ struct DashboardView: View {
         VStack(spacing: 14) {
             SectionHeader(
                 title: "التقييم الأسبوعي",
-                subtitle: "من 100 حسب مشاهدات منشورات آخر ٧ أيام",
+                subtitle: "من 100 — كل ١٠٬٠٠٠ مشاهدة = نقطة، و١٬٠٠٠٬٠٠٠ = 100%",
                 actionTitle: "كل الحسابات",
                 action: { onOpenAccounts() }
             )
@@ -841,7 +841,7 @@ struct DashboardView: View {
             .foregroundColor(Theme.textTertiary)
 
             if store.summary.accounts > 0 {
-                Text("بيانات TikTok التي تظهر بدون ≈ دقيقة 100%. مشاهدات الفيديو العامة يقرّبها TikTok وتظهر بعلامة ≈. التقييم من 100 محسوب من مشاهدات منشورات آخر ٧ أيام.")
+                Text("بيانات TikTok التي تظهر بدون ≈ دقيقة 100%. مشاهدات الفيديو العامة يقرّبها TikTok وتظهر بعلامة ≈. التقييم من 100: كل ١٠٬٠٠٠ مشاهدة = نقطة، و١٬٠٠٠٬٠٠٠ = 100%.")
                     .font(.system(size: 9.5))
                     .foregroundColor(Theme.textTertiary)
                     .multilineTextAlignment(.center)

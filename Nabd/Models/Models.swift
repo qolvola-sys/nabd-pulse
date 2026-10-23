@@ -3,18 +3,17 @@ import SwiftUI
 
 // MARK: - التقييم الأسبوعي
 
-/// تقييم من ١٠٠ يعتمد على مجموع مشاهدات المنشورات المنشورة خلال آخر ٧ أيام.
-/// المقياس لوغاريتمي حتى لا تختفي الحسابات الصغيرة: ١٠٠ مشاهدة = ٠، و١٠ ملايين = ١٠٠.
+/// تقييم من ١٠٠ يعتمد اعتماداً مباشراً على مجموع مشاهدات المنشورات في آخر ٧ أيام.
+/// كل ١٠٬٠٠٠ مشاهدة = نقطة واحدة: ٥٠٠٬٠٠٠ مشاهدة = ٥٠، و١٬٠٠٠٬٠٠٠ مشاهدة = ١٠٠.
+/// ما فوق المليون يبقى ١٠٠ (أعلى تقييم).
 enum WeeklyScore {
-    static let minimumViews: Double = 100
-    static let maximumViews: Double = 10_000_000
+    static let viewsForFullScore: Int64 = 1_000_000
+    static let viewsPerPoint: Int64 = viewsForFullScore / 100
 
     static func value(for views: Int64) -> Int {
         guard views > 0 else { return 0 }
-        let clamped = min(max(Double(views), minimumViews), maximumViews)
-        let range = log10(maximumViews) - log10(minimumViews)
-        let score = (log10(clamped) - log10(minimumViews)) / range * 100
-        return Int(score.rounded())
+        let points = views / viewsPerPoint
+        return Int(min(100, points))
     }
 
     static func label(for score: Int) -> String {

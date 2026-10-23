@@ -168,7 +168,7 @@ struct AccountsView: View {
 
     private var weeklyScoreText: String {
         let exact = store.summary.weeklyComplete && store.summary.weeklyViewsExact
-        return Num.score(store.summary.weeklyScore, exact: exact) + "/100"
+        return Num.score(store.summary.weeklyScore, exact: exact) + "%"
     }
 
     private var header: some View {

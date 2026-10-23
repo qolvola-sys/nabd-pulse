@@ -41,7 +41,7 @@ struct AccountDetailView: View {
 
     private var weeklyFootnote: String {
         if current.weeklyComplete && current.weeklyViewsExact {
-            return "كل منشورات آخر ٧ أيام محمّلة، والنتيجة دقيقة 100%."
+            return "كل منشورات آخر ٧ أيام محمّلة، والنتيجة دقيقة 100% (١٬٠٠٠٬٠٠٠ مشاهدة = 100%)."
         }
         if !current.weeklyComplete && !current.weeklyViewsExact {
             return "≈ النتيجة من أحدث ١٠ منشورات فقط، ومشاهدات TikTok العامة مقرّبة."

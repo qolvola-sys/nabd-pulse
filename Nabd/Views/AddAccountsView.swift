@@ -11,6 +11,9 @@ struct AddAccountsView: View {
     @State private var errorText: String?
     @FocusState private var editorFocused: Bool
 
+    /// أقصى عدد يمكن إضافته في الدفعة الواحدة. يمكن تكرار الإضافة لدفعات إضافية.
+    private let maxAccountsPerBatch = 500
+
     private var entries: [String] {
         text
             .components(separatedBy: CharacterSet(charactersIn: "\n,;،"))
@@ -25,6 +28,22 @@ struct AddAccountsView: View {
     private var validHandles: [String] {
         var seen = Set<String>()
         return parsed.compactMap { $0.handle }.filter { seen.insert($0).inserted }
+    }
+
+    private var existingHandles: Set<String> {
+        Set(store.accounts.map { $0.handle.lowercased() })
+    }
+
+    private var pendingHandles: [String] {
+        validHandles.filter { !existingHandles.contains($0.lowercased()) }
+    }
+
+    private var acceptedHandles: [String] {
+        Array(pendingHandles.prefix(maxAccountsPerBatch))
+    }
+
+    private var overflowCount: Int {
+        max(0, pendingHandles.count - maxAccountsPerBatch)
     }
 
     private var invalidCount: Int {
@@ -156,8 +175,12 @@ struct AddAccountsView: View {
                     Label("\(invalidCount) غير مفهوم", systemImage: "exclamationmark.circle")
                         .foregroundColor(Theme.gold)
                 }
+                if overflowCount > 0 {
+                    Label("\(overflowCount) فوق الحد", systemImage: "exclamationmark.triangle")
+                        .foregroundColor(Theme.red)
+                }
                 Spacer()
-                Text("الحد ١٠٠")
+                Text("الحد \(maxAccountsPerBatch)")
                     .foregroundColor(Theme.textTertiary)
             }
             .font(.system(size: 10.5, weight: .medium))
@@ -172,12 +195,12 @@ struct AddAccountsView: View {
                     .font(.system(size: 11.5, weight: .bold))
                     .foregroundColor(Theme.textSecondary)
                 Spacer()
-                Text("\(validHandles.count) حساب")
+                Text("\(acceptedHandles.count) حساب")
                     .font(.system(size: 10.5, weight: .semibold, design: .rounded))
                     .foregroundColor(Theme.cyan)
             }
             FlowLayout(spacing: 6) {
-                ForEach(validHandles.prefix(24), id: \.self) { handle in
+                ForEach(acceptedHandles.prefix(24), id: \.self) { handle in
                     Text("@" + handle)
                         .font(.system(size: 10.5, weight: .medium))
                         .foregroundColor(Theme.textSecondary)
@@ -186,13 +209,18 @@ struct AddAccountsView: View {
                         .background(Capsule().fill(Theme.surfaceRaised))
                         .overlay(Capsule().strokeBorder(Theme.borderSoft, lineWidth: 1))
                 }
-                if validHandles.count > 24 {
-                    Text("+\(validHandles.count - 24)")
+                if acceptedHandles.count > 24 {
+                    Text("+\(acceptedHandles.count - 24)")
                         .font(.system(size: 10.5, weight: .bold))
                         .foregroundColor(Theme.cyan)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 5)
                 }
+            }
+            if overflowCount > 0 {
+                Text("سيُضاف أول \(maxAccountsPerBatch) حساب فقط. أضف الباقي في دفعة ثانية.")
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .foregroundColor(Theme.gold)
             }
         }
         .card(padding: 15)
@@ -225,7 +253,7 @@ struct AddAccountsView: View {
                     .lineSpacing(3)
 
                 VStack(spacing: 8) {
-                    ForEach(result.created) { account in
+                    ForEach(Array(result.created.prefix(6))) { account in
                         HStack(spacing: 9) {
                             AvatarView(account: account, size: 30, showVerified: false)
                             VStack(alignment: .leading, spacing: 1) {
@@ -266,7 +294,7 @@ struct AddAccountsView: View {
                                         .foregroundColor(Theme.cyan)
                                         .lineLimit(1)
                                         .minimumScaleFactor(0.6)
-                                    Text("أسبوعياً \(Num.maybeApprox(account.weeklyViews, exact: account.weeklyScoreExact)) · \(Num.score(account.weeklyScore, exact: account.weeklyScoreExact))/100")
+                                    Text("أسبوعياً \(Num.maybeApprox(account.weeklyViews, exact: account.weeklyScoreExact)) · \(Num.score(account.weeklyScore, exact: account.weeklyScoreExact))%")
                                         .font(.system(size: 8.5, weight: .medium, design: .rounded))
                                         .foregroundColor(WeeklyScoreStyle.color(for: account.weeklyScore))
                                         .lineLimit(1)
@@ -276,6 +304,13 @@ struct AddAccountsView: View {
                         }
                         .padding(8)
                         .background(RoundedRectangle(cornerRadius: 11).fill(Theme.bgSoft))
+                    }
+                    if result.created.count > 6 {
+                        Text("+\(result.created.count - 6) حساباً آخر تمت إضافته")
+                            .font(.system(size: 10.5, weight: .semibold))
+                            .foregroundColor(Theme.textTertiary)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .padding(.top, 2)
                     }
                 }
             }
@@ -320,11 +355,17 @@ struct AddAccountsView: View {
                     Image(systemName: "plus.circle.fill")
                         .font(.system(size: 14, weight: .bold))
                 }
-                Text(validHandles.isEmpty ? "أضف رابطاً واحداً على الأقل" : "إضافة \(validHandles.count) حساب")
+                Text(validHandles.isEmpty
+                     ? "أضف رابطاً واحداً على الأقل"
+                     : (acceptedHandles.isEmpty
+                        ? "كل الحسابات مضافة مسبقاً"
+                        : (overflowCount > 0
+                           ? "إضافة أول \(acceptedHandles.count) حساب"
+                           : "إضافة \(acceptedHandles.count) حساب")))
             }
         }
         .buttonStyle(GradientButtonStyle())
-        .disabled(validHandles.isEmpty || isSubmitting || store.isDemo)
+        .disabled(acceptedHandles.isEmpty || isSubmitting || store.isDemo)
         .opacity(store.isDemo ? 0.45 : 1)
     }
 
@@ -345,16 +386,17 @@ struct AddAccountsView: View {
     }
 
     private func submit() async {
-        guard !validHandles.isEmpty else { return }
+        guard !acceptedHandles.isEmpty else { return }
+        let keepText = overflowCount > 0
         editorFocused = false
         isSubmitting = true
         errorText = nil
-        let response = await store.add(links: parsed.filter { $0.handle != nil }.map { $0.raw })
+        let response = await store.add(links: acceptedHandles.map { "@\($0)" })
         isSubmitting = false
         if let response {
             withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
                 result = response
-                text = ""
+                if !keepText { text = "" }
             }
         } else if store.useServer {
             errorText = "لم نستطع إضافة الحسابات. تأكد من اتصال الخادم ثم أعد المحاولة."
