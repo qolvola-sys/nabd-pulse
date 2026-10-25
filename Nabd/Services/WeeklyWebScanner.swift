@@ -119,7 +119,7 @@ final class WeeklyWebScanner: NSObject, WKNavigationDelegate {
 
         for raw in items.values {
             guard let id = raw["id"] as? String else { continue }
-            var created = intValue(raw["createTime"])
+            var created = Int(intValue(raw["createTime"]))
             if created <= 0 { created = DirectTikTokService.createTime(from: id) }
             videos.append(VideoItem(
                 id: id,
