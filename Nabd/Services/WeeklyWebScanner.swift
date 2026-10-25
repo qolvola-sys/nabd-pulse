@@ -28,6 +28,8 @@ final class WeeklyWebScanner: NSObject, WKNavigationDelegate {
     private var webView: WKWebView?
     private var navContinuation: CheckedContinuation<Void, Never>?
     private var navTimeout: Task<Void, Never>?
+    private var isBusy = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
 
     private let desktopUA =
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 " +
@@ -39,6 +41,9 @@ final class WeeklyWebScanner: NSObject, WKNavigationDelegate {
 
     /// يقرأ كل منشورات الحساب حتى يغطي نافذة آخر ٧ أيام (أو حتى نهاية القائمة).
     func scan(handle: String, cutoff: Int) async -> WeeklyScanPayload? {
+        await acquire()
+        defer { release() }
+
         var payload = await runScan(handle: handle, cutoff: cutoff, rounds: 14)
         if payload == nil || (payload?.videos.isEmpty ?? true) {
             // محاولة ثانية بعد مهلة قصيرة: أحياناً يعيد TikTok صفحة تحقق مؤقتة.
@@ -46,6 +51,25 @@ final class WeeklyWebScanner: NSObject, WKNavigationDelegate {
             payload = await runScan(handle: handle, cutoff: cutoff, rounds: 10)
         }
         return payload
+    }
+
+    /// يضمن أن قراءة واحدة فقط تستخدم المتصفح المخفي في أي لحظة.
+    private func acquire() async {
+        if !isBusy {
+            isBusy = true
+            return
+        }
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            waiters.append(continuation)
+        }
+    }
+
+    private func release() {
+        if waiters.isEmpty {
+            isBusy = false
+        } else {
+            waiters.removeFirst().resume()
+        }
     }
 
     private func runScan(handle: String, cutoff: Int, rounds: Int) async -> WeeklyScanPayload? {
