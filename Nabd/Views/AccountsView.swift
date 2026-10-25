@@ -138,7 +138,7 @@ struct AccountsView: View {
             }
             Button("إلغاء", role: .cancel) { pendingDelete = nil }
         } message: {
-            Text("ستُحذف بياناته من نبض فقط، ولن يتأثر حساب TikTok.")
+            Text("ستُحذف بياناته من \(AppVariant.name) فقط، ولن يتأثر حساب TikTok.")
         }
     }
 
@@ -177,7 +177,7 @@ struct AccountsView: View {
                 Text("الحسابات")
                     .font(.system(size: 26, weight: .heavy, design: .rounded))
                     .foregroundColor(Theme.text)
-                Text("\(store.accounts.count) حساباً في نبض")
+                Text("\(store.accounts.count) حساباً في \(AppVariant.name)")
                     .font(.system(size: 11.5))
                     .foregroundColor(Theme.textSecondary)
             }

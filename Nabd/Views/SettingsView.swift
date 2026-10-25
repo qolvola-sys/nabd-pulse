@@ -430,10 +430,12 @@ struct SettingsView: View {
                 .frame(width: 44, height: 44)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("نبض")
+                    Text(AppVariant.name)
                         .font(.system(size: 15, weight: .bold, design: .rounded))
                         .foregroundColor(Theme.text)
-                    Text("تحليلات TikTok لعدة حسابات · 1.2.0")
+                    Text(AppVariant.readsEveryWeeklyPost
+                         ? "تحليلات TikTok لعدة حسابات · 1.0.0"
+                         : "تحليلات TikTok لعدة حسابات · 1.2.0")
                         .font(.system(size: 10.5))
                         .foregroundColor(Theme.textTertiary)
                 }
@@ -443,7 +445,9 @@ struct SettingsView: View {
 
             HairlineDivider()
 
-            Text("يعمل نبض بطريقتين: قراءة الإحصاءات العامة من TikTok مباشرة بدون خادم أو تسجيل دخول، أو عبر TikTok Display API الرسمي عند ربط خادمك الخاص. لا نطلب كلمة المرور أبداً.")
+            Text(AppVariant.readsEveryWeeklyPost
+                 ? "تقرأ «المتابعة» الإحصاءات العامة من TikTok مباشرة بدون خادم أو تسجيل دخول، وتفتح صفحة كل حساب لقراءة كل منشورات آخر ٧ أيام وحساب التقييم منها. لا نطلب كلمة المرور أبداً."
+                 : "يعمل نبض بطريقتين: قراءة الإحصاءات العامة من TikTok مباشرة بدون خادم أو تسجيل دخول، أو عبر TikTok Display API الرسمي عند ربط خادمك الخاص. لا نطلب كلمة المرور أبداً.")
                 .font(.system(size: 10.5))
                 .foregroundColor(Theme.textTertiary)
                 .lineSpacing(4)

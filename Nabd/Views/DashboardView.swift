@@ -40,10 +40,10 @@ struct DashboardView: View {
             return "كل منشورات آخر ٧ أيام محمّلة، والنتيجة دقيقة 100%."
         }
         if !store.summary.weeklyComplete && !store.summary.weeklyViewsExact {
-            return "≈ النتيجة من أحدث ١٠ منشورات فقط، ومشاهدات TikTok العامة مقرّبة."
+            return "≈ النتيجة من المنشورات المحمّلة، ومشاهدات TikTok العامة مقرّبة."
         }
         if !store.summary.weeklyComplete {
-            return "النتيجة من أحدث ١٠ منشورات فقط؛ الحسابات كثيفة النشر تحتاج ربطاً رسمياً لقراءة كل المنشورات."
+            return AppVariant.incompleteWeeklyNote
         }
         return "≈ مشاهدات الفيديو العامة يقرّبها TikTok؛ النتيجة تقريبية."
     }
@@ -140,7 +140,7 @@ struct DashboardView: View {
         HStack(alignment: .center) {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 7) {
-                    Text("نبض")
+                    Text(AppVariant.name)
                         .font(.system(size: 28, weight: .heavy, design: .rounded))
                         .foregroundColor(Theme.text)
                     Circle()
@@ -165,7 +165,7 @@ struct DashboardView: View {
                 ZStack {
                     Circle().fill(Theme.surface)
                     Circle().strokeBorder(Theme.border, lineWidth: 1)
-                    Text("ن")
+                    Text(AppVariant.mark)
                         .font(.system(size: 17, weight: .bold, design: .rounded))
                         .foregroundColor(Theme.cyan)
                 }
@@ -484,7 +484,7 @@ struct DashboardView: View {
         VStack(spacing: 14) {
             SectionHeader(
                 title: "التقييم الأسبوعي",
-                subtitle: "من 100 — كل ١٠٬٠٠٠ مشاهدة = نقطة، و١٬٠٠٠٬٠٠٠ = 100%",
+                subtitle: AppVariant.weekdaySubtitle,
                 actionTitle: "كل الحسابات",
                 action: { onOpenAccounts() }
             )
@@ -841,7 +841,9 @@ struct DashboardView: View {
             .foregroundColor(Theme.textTertiary)
 
             if store.summary.accounts > 0 {
-                Text("بيانات TikTok التي تظهر بدون ≈ دقيقة 100%. مشاهدات الفيديو العامة يقرّبها TikTok وتظهر بعلامة ≈. التقييم من 100: كل ١٠٬٠٠٠ مشاهدة = نقطة، و١٬٠٠٠٬٠٠٠ = 100%.")
+                Text(AppVariant.readsEveryWeeklyPost
+                     ? "التقييم الأسبوعي في «المتابعة» يُحسب من كل منشورات آخر ٧ أيام لكل حساب. الأرقام التي تظهر بدون ≈ دقيقة 100%: كل ١٠٬٠٠٠ مشاهدة = نقطة، و١٬٠٠٠٬٠٠٠ = 100%."
+                     : "بيانات TikTok التي تظهر بدون ≈ دقيقة 100%. مشاهدات الفيديو العامة يقرّبها TikTok وتظهر بعلامة ≈. التقييم من 100: كل ١٠٬٠٠٠ مشاهدة = نقطة، و١٬٠٠٠٬٠٠٠ = 100%.")
                     .font(.system(size: 9.5))
                     .foregroundColor(Theme.textTertiary)
                     .multilineTextAlignment(.center)

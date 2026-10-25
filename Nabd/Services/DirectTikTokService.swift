@@ -56,6 +56,9 @@ final class DirectTikTokService {
     private let session: URLSession
     private var cookiesAt = Date.distantPast
     private var lastRequestAt = Date.distantPast
+    #if MUTABAA
+    private var weeklyScans: [String: (at: Date, payload: WeeklyScanPayload)] = [:]
+    #endif
 
     private let homeURL = "https://www.tiktok.com/?lang=en"
     private let profileHosts = ["www.tiktok.com", "us.tiktok.com"]
@@ -98,7 +101,17 @@ final class DirectTikTokService {
         session = URLSession(configuration: configuration)
     }
 
+    /// الواجهة العامة: تقرأ الأساس ثم — في نسخة «المتابعة» — تكمل نافذة
+    /// آخر ٧ أيام من صفحة الحساب عندما لا تكفيها المنشورات المختصرة.
     func fetch(handle rawHandle: String, knownPosts: Int = 0, createdAt: String? = nil) async throws -> DirectTikTokResult {
+        var result = try await fetchBase(handle: rawHandle, knownPosts: knownPosts, createdAt: createdAt)
+        #if MUTABAA
+        result = await completeWeeklyWindow(in: result)
+        #endif
+        return result
+    }
+
+    private func fetchBase(handle rawHandle: String, knownPosts: Int = 0, createdAt: String? = nil) async throws -> DirectTikTokResult {
         let handle = rawHandle
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "@", with: "")
@@ -579,4 +592,101 @@ final class DirectTikTokService {
         guard let value = UInt64(id) else { return 0 }
         return Int(value >> 32)
     }
+
+    #if MUTABAA
+    // MARK: - إكمال نافذة الأسبوع (نسخة «المتابعة»)
+
+    /// يُستدعى فقط عندما تكون أحدث ١٠ منشورات كلها داخل آخر ٧ أيام، أي أننا
+    /// لا نعرف إن كان هناك منشورات أقدم ما زالت داخل النافذة. نقرأ عندها
+    /// صفحة الحساب كاملة ونستخرج كل منشورات آخر ٧ أيام.
+    private func completeWeeklyWindow(in result: DirectTikTokResult) async -> DirectTikTokResult {
+        guard !result.account.weeklyComplete else { return result }
+
+        let handle = result.account.handle
+        let now = Date()
+        let cutoff = Int(now.timeIntervalSince1970) - weekSeconds
+
+        let payload: WeeklyScanPayload?
+        if let cached = weeklyScans[handle], now.timeIntervalSince(cached.at) < 1_800 {
+            payload = cached.payload
+        } else {
+            payload = await WeeklyWebScanner.shared.scan(handle: handle, cutoff: cutoff)
+            if let payload { weeklyScans[handle] = (now, payload) }
+        }
+
+        guard let payload, !payload.videos.isEmpty else { return result }
+        return merge(payload, into: result)
+    }
+
+    private func merge(_ scan: WeeklyScanPayload, into result: DirectTikTokResult) -> DirectTikTokResult {
+        var byID: [String: VideoItem] = [:]
+        for video in result.videos { byID[video.id] = video }
+        // المنشورات القادمة من الصفحة أدق: مشاهدات فعلية كاملة.
+        for video in scan.videos { byID[video.id] = video }
+        let videos = byID.values.sorted { $0.createTime > $1.createTime }
+        guard !videos.isEmpty else { return result }
+
+        var account = result.account
+
+        if let profile = scan.profile {
+            if let name = profile["name"] as? String, !name.isEmpty {
+                account.displayName = name
+            }
+            if let avatar = profile["avatar"] as? String, !avatar.isEmpty {
+                account.avatarUrl = avatar
+            }
+            if let verified = profile["verified"] as? Bool {
+                account.isVerified = verified
+            }
+            let followers = scanInt64(profile["followers"])
+            let following = scanInt64(profile["following"])
+            let hearts = scanInt64(profile["hearts"])
+            let posts = scanInt(profile["posts"])
+            if followers > 0 { account.followers = followers }
+            if following > 0 { account.following = following }
+            if hearts > 0 { account.likes = abs(hearts) }
+            if posts > 0 { account.posts = posts }
+            if followers > 0 && hearts > 0 && posts > 0 { account.profileExact = true }
+        }
+
+        let now = Int(Date().timeIntervalSince1970)
+        let dayCutoff = now - daySeconds
+        let weekCutoff = now - weekSeconds
+        let daily = videos.filter { $0.createTime >= dayCutoff }
+        let weekly = videos.filter { $0.createTime >= weekCutoff }
+        let totalViews = videos.reduce(Int64(0)) { $0 + $1.views }
+
+        account.views = totalViews
+        account.fetchedVideos = videos.count
+        account.posts24h = daily.count
+        account.views24h = daily.reduce(Int64(0)) { $0 + $1.views }
+        account.posts7d = weekly.count
+        account.weeklyViews = weekly.reduce(Int64(0)) { $0 + $1.views }
+        account.avgViews = totalViews / Int64(videos.count)
+        if account.posts > 0 {
+            account.coverage = min(1, Double(videos.count) / Double(account.posts))
+        }
+        account.viewsExact = videos.allSatisfy { $0.viewsExact }
+        account.allPostsLoaded = account.posts > 0 && videos.count >= account.posts
+        account.dailyComplete = scan.complete
+        account.dailyViewsExact = scan.complete && scan.exact && daily.allSatisfy { $0.viewsExact }
+        account.weeklyComplete = scan.complete
+        account.weeklyViewsExact = scan.complete && scan.exact && weekly.allSatisfy { $0.viewsExact }
+        account.status = "public"
+        account.error = nil
+        account.lastSyncedAt = ISO8601DateFormatter.nabd.string(from: Date())
+
+        return DirectTikTokResult(account: account, videos: videos)
+    }
+
+    private func scanInt64(_ value: Any?) -> Int64 {
+        if let number = value as? NSNumber { return number.int64Value }
+        if let text = value as? String { return Int64(text) ?? 0 }
+        return 0
+    }
+
+    private func scanInt(_ value: Any?) -> Int {
+        Int(scanInt64(value))
+    }
+    #endif
 }

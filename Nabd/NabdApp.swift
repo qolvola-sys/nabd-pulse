@@ -9,7 +9,7 @@ struct NabdApp: App {
             RootView()
                 .environmentObject(store)
                 .onOpenURL { url in
-                    guard url.scheme == "nabd" else { return }
+                    guard url.scheme == AppVariant.urlScheme else { return }
                     Task { await store.refresh(showSpinner: false) }
                 }
         }

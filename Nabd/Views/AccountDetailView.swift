@@ -44,10 +44,12 @@ struct AccountDetailView: View {
             return "كل منشورات آخر ٧ أيام محمّلة، والنتيجة دقيقة 100% (١٬٠٠٠٬٠٠٠ مشاهدة = 100%)."
         }
         if !current.weeklyComplete && !current.weeklyViewsExact {
-            return "≈ النتيجة من أحدث ١٠ منشورات فقط، ومشاهدات TikTok العامة مقرّبة."
+            return AppVariant.readsEveryWeeklyPost
+                ? "≈ بعض منشورات آخر ٧ أيام لم تُقرأ بعد، ومشاهدات TikTok العامة مقرّبة."
+                : "≈ النتيجة من أحدث ١٠ منشورات فقط، ومشاهدات TikTok العامة مقرّبة."
         }
         if !current.weeklyComplete {
-            return "النتيجة من أحدث ١٠ منشورات فقط؛ الحساب نشر أكثر من ١٠ منشورات خلال ٧ أيام."
+            return AppVariant.incompleteWeeklyNote
         }
         return "≈ مشاهدات الفيديو العامة يقرّبها TikTok؛ النتيجة تقريبية."
     }
@@ -86,7 +88,7 @@ struct AccountDetailView: View {
         .presentationDragIndicator(.hidden)
         .task { await load() }
         .confirmationDialog("إزالة @\(current.handle)؟", isPresented: $confirmDelete, titleVisibility: .visible) {
-            Button("إزالة من نبض", role: .destructive) {
+            Button("إزالة من \(AppVariant.name)", role: .destructive) {
                 Task {
                     await store.delete(current)
                     dismiss()
@@ -235,7 +237,9 @@ struct AccountDetailView: View {
                  ? "كل منشورات آخر ٢٤ ساعة محمّلة، والمشاهدات دقيقة 100%."
                  : (current.dailyComplete
                     ? "≈ مشاهدات الفيديو العامة يقرّبها TikTok."
-                    : "الحساب نشر أكثر من ١٠ منشورات في ٢٤ ساعة؛ تُعرض أحدث ١٠ فقط."))
+                    : (AppVariant.readsEveryWeeklyPost
+                       ? "بعض منشورات آخر ٢٤ ساعة لم تُقرأ بعد؛ تُعرض المنشورات المحمّلة."
+                       : "الحساب نشر أكثر من ١٠ منشورات في ٢٤ ساعة؛ تُعرض أحدث ١٠ فقط.")))
                 .font(.system(size: 9.5))
                 .foregroundColor(Theme.textTertiary)
                 .lineSpacing(3)
