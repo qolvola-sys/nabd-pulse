@@ -91,7 +91,7 @@ struct RootView: View {
                 )
         }
         .spacesTopInset(spacesTopInsetEnabled)
-        .environment(\.layoutDirection, .rightToLeft)
+        .modifier(AppLayoutDirectionModifier())
         .preferredColorScheme(.dark)
         .tint(Theme.cyan)
         .onAppear { store.bootstrap() }
@@ -111,6 +111,19 @@ struct RootView: View {
     private func switchTab(_ target: AppTab) {
         withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { tab = target }
         store.haptic(.selection)
+    }
+}
+
+/// «المتابعة» عربية بالكامل، ونترك اتجاه الواجهة للنظام بدل فرض RTL يدويًا.
+/// الفرض اليدوي كان يجعل نصوص قوائم الضغط المطوّل تُعكس أفقياً.
+/// «نبض» يحتفظ بالسلوك السابق دون أي تغيير.
+private struct AppLayoutDirectionModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        #if MUTABAA
+        content
+        #else
+        content.environment(\.layoutDirection, .rightToLeft)
+        #endif
     }
 }
 

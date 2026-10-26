@@ -162,7 +162,7 @@ struct AccountsView: View {
                         movingAccount = account
                         store.haptic(.selection)
                     } label: {
-                        Label("نقل إلى موضع…", systemImage: "arrow.up.arrow.down")
+                        Label("نقل إلى مجموعة…", systemImage: "arrow.up.arrow.down")
                     }
                     Button {
                         withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
@@ -261,7 +261,7 @@ struct AccountsView: View {
                     HStack(spacing: 4) {
                         Image(systemName: "line.3.horizontal")
                             .font(.system(size: 9, weight: .bold))
-                        Text("رتّب بالأسهم أو انقل إلى موضع")
+                        Text("رتّب بالأسهم أو انقل إلى مجموعة")
                             .font(.system(size: 8.5))
                     }
                     .foregroundColor(Theme.textTertiary)
@@ -341,7 +341,7 @@ struct AccountsView: View {
         let count = store.accounts.count
 
         return HStack(spacing: 8) {
-            Text("الموضع \(Num.full(Int64(index + 1))) من \(Num.full(Int64(count)))")
+            Text("المجموعة \(Num.full(Int64(index / 3 + 1))) · الموضع \(Num.full(Int64(index + 1))) من \(Num.full(Int64(count)))")
                 .font(.system(size: 9.5, weight: .medium, design: .rounded))
                 .foregroundColor(Theme.textTertiary)
 
@@ -382,7 +382,7 @@ struct AccountsView: View {
                 HStack(spacing: 4) {
                     Image(systemName: "arrow.up.arrow.down")
                         .font(.system(size: 9, weight: .bold))
-                    Text("نقل إلى موضع")
+                    Text("نقل إلى مجموعة")
                         .font(.system(size: 9.5, weight: .semibold))
                 }
                 .foregroundColor(Theme.cyan)

@@ -27,6 +27,7 @@ targets:
       - path: Nabd
         excludes:
           - "Info.plist"
+          - "ar.lproj"
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.nabd.pulse
@@ -79,8 +80,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.nabd.mutabaa
         PRODUCT_NAME: Mutabaa
-        MARKETING_VERSION: "1.1"
-        CURRENT_PROJECT_VERSION: "2"
+        MARKETING_VERSION: "1.2"
+        CURRENT_PROJECT_VERSION: "3"
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "MUTABAA"
         TARGETED_DEVICE_FAMILY: "1"
         SUPPORTS_MACCATALYST: "NO"
@@ -97,8 +98,10 @@ targets:
         CFBundlePackageType: "APPL"
         CFBundleInfoDictionaryVersion: "6.0"
         CFBundleDevelopmentRegion: "ar"
-        CFBundleShortVersionString: "1.1"
-        CFBundleVersion: "2"
+        CFBundleLocalizations:
+          - ar
+        CFBundleShortVersionString: "1.2"
+        CFBundleVersion: "3"
         LSRequiresIPhoneOS: true
         UILaunchScreen:
           UIColorName: LaunchBackground
@@ -117,3 +120,30 @@ targets:
             CFBundleURLSchemes:
               - "mutabaa"
         UIViewControllerBasedStatusBarAppearance: false
+
+  MutabaaUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: UITests
+    dependencies:
+      - target: Mutabaa
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.nabd.mutabaa.uitests
+        TEST_TARGET_NAME: Mutabaa
+        GENERATE_INFOPLIST_FILE: "YES"
+        SWIFT_VERSION: "5.0"
+
+schemes:
+  MutabaaUITests:
+    build:
+      targets:
+        Mutabaa: all
+        MutabaaUITests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - MutabaaUITests

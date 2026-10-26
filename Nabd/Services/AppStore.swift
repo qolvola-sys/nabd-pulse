@@ -282,6 +282,13 @@ final class AppStore: ObservableObject {
         haptic(.impact)
     }
 
+    /// ينقل الحساب إلى أول موضع في المجموعة المحددة (0-based).
+    /// المجموعات هي تقسيمات القائمة الحالية: ٣ حسابات لكل مجموعة.
+    func moveAccount(_ id: String, toGroup group: Int, groupSize: Int = 3) {
+        guard group >= 0, groupSize > 0 else { return }
+        moveAccount(id, toPosition: group * groupSize)
+    }
+
     private func mirrorAccountsIntoActiveSpace() {
         guard isDirect,
               !isSwitchingSpace,
