@@ -13,6 +13,23 @@ final class LongPressTests: XCTestCase {
         add(attachment)
     }
 
+    /// نستهدف عنصر القائمة نفسه بمعرّفه، لأن النص وحده يطابق أيضاً
+    /// زر شريط الترتيب الموجود خلف القائمة بنفس التسمية.
+    private func moveMenuItem(in app: XCUIApplication) -> XCUIElement? {
+        let identified = app.buttons["move-to-group-menu"]
+        if identified.waitForExistence(timeout: 5), identified.isHittable {
+            return identified
+        }
+
+        // احتياط: عنصر القائمة يظهر قرب الحساب، بينما شريط الترتيب أسفل الشاشة.
+        let candidates = app.buttons
+            .matching(NSPredicate(format: "label CONTAINS %@", "نقل إلى مجموعة"))
+            .allElementsBoundByIndex
+            .filter { $0.identifier != "move-to-group-bar" && $0.isHittable }
+
+        return candidates.min(by: { $0.frame.minY < $1.frame.minY })
+    }
+
     func testMoveAccountToGroup() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--screen=accounts"]
@@ -37,14 +54,10 @@ final class LongPressTests: XCTestCase {
         sleep(2)
         attach("context-menu")
 
-        let moveItem = app.buttons
-            .matching(NSPredicate(format: "label CONTAINS %@", "نقل إلى مجموعة"))
-            .firstMatch
-
-        guard moveItem.waitForExistence(timeout: 8) else {
+        guard let moveItem = moveMenuItem(in: app) else {
             print("MENU_BUTTONS_START")
             for button in app.buttons.allElementsBoundByIndex {
-                print("BUTTON: \(button.label)")
+                print("BUTTON: \(button.label) id=\(button.identifier) frame=\(button.frame)")
             }
             print("MENU_BUTTONS_END")
             attach("move-item-not-found")

@@ -164,6 +164,7 @@ struct AccountsView: View {
                     } label: {
                         Label("نقل إلى مجموعة…", systemImage: "arrow.up.arrow.down")
                     }
+                    .accessibilityIdentifier("move-to-group-menu")
                     Button {
                         withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
                             store.moveAccount(account.id, by: -1)
@@ -395,6 +396,7 @@ struct AccountsView: View {
                 )
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("move-to-group-bar")
         }
         .padding(.horizontal, 2)
     }
