@@ -121,29 +121,3 @@ targets:
               - "mutabaa"
         UIViewControllerBasedStatusBarAppearance: false
 
-  MutabaaUITests:
-    type: bundle.ui-testing
-    platform: iOS
-    sources:
-      - path: UITests
-    dependencies:
-      - target: Mutabaa
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.nabd.mutabaa.uitests
-        TEST_TARGET_NAME: Mutabaa
-        GENERATE_INFOPLIST_FILE: "YES"
-        SWIFT_VERSION: "5.0"
-
-schemes:
-  MutabaaUITests:
-    build:
-      targets:
-        Mutabaa: all
-        MutabaaUITests: [test]
-    run:
-      config: Debug
-    test:
-      config: Debug
-      targets:
-        - MutabaaUITests
