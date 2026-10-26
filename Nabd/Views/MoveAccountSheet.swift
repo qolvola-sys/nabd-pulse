@@ -43,7 +43,7 @@ struct MoveAccountSheet: View {
             }
             .padding(.top, 16)
         }
-        .presentationDetents([.medium, .large])
+        .presentationDetents([.large])
         .presentationDragIndicator(.visible)
         .sheet(item: $groupEditor) { request in
             GroupEditorSheet(mode: request.mode) { name in
@@ -80,6 +80,7 @@ struct MoveAccountSheet: View {
                     .background(Circle().fill(Theme.surfaceRaised))
             }
             .buttonStyle(PressableStyle())
+            .accessibilityIdentifier("move-sheet-close")
         }
         .padding(.horizontal, 18)
     }
@@ -303,18 +304,24 @@ struct MoveAccountSheet: View {
                 fineButton(title: "أعلى المجموعة", icon: "arrow.up.to.line", enabled: canMoveUp) {
                     moveToGroupTop()
                 }
+                .accessibilityIdentifier("fine-top")
+
                 fineButton(title: "خطوة لأعلى", icon: "chevron.up", enabled: canMoveUp) {
                     moveWithinGroup(by: -1)
                 }
+                .accessibilityIdentifier("fine-up")
             }
 
             HStack(spacing: 8) {
                 fineButton(title: "خطوة لأسفل", icon: "chevron.down", enabled: canMoveDown) {
                     moveWithinGroup(by: 1)
                 }
+                .accessibilityIdentifier("fine-down")
+
                 fineButton(title: "أسفل المجموعة", icon: "arrow.down.to.line", enabled: canMoveDown) {
                     moveToGroupBottom()
                 }
+                .accessibilityIdentifier("fine-bottom")
             }
         }
         .padding(.horizontal, 18)
