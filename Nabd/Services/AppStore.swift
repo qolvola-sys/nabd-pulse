@@ -170,6 +170,34 @@ final class AppStore: ObservableObject {
         activeSpace?.name ?? AppVariant.name
     }
 
+    /// مجموعات المساحة النشطة بترتيبها.
+    var groups: [AccountGroup] {
+        activeSpace?.groups ?? []
+    }
+
+    var suggestedGroupName: String {
+        activeSpace?.suggestedGroupName ?? "المجموعة 1"
+    }
+
+    func groupID(for accountID: String) -> String? {
+        activeSpace?.groupMembership[accountID]
+    }
+
+    func accounts(in groupID: String) -> [Account] {
+        guard let membership = activeSpace?.groupMembership else { return [] }
+        return accounts.filter { membership[$0.id] == groupID }
+    }
+
+    /// معلومات موضع الحساب داخل مجموعته الحالية.
+    func groupInfo(for accountID: String) -> (group: AccountGroup, index: Int, total: Int)? {
+        guard let space = activeSpace,
+              let groupID = space.groupMembership[accountID],
+              let group = space.groups.first(where: { $0.id == groupID }) else { return nil }
+        let members = accounts.filter { space.groupMembership[$0.id] == groupID }
+        guard let index = members.firstIndex(where: { $0.id == accountID }) else { return nil }
+        return (group, index, members.count)
+    }
+
     /// الشريط العلوي يظهر فقط في الوضع المباشر حيث توجد مساحات محفوظة.
     var spacesEnabled: Bool {
         !spaces.isEmpty && !isDemo && !useServer
@@ -205,7 +233,8 @@ final class AppStore: ObservableObject {
         let name = trimmed.isEmpty
             ? "مساحة \(spaces.count + 1)"
             : String(trimmed.prefix(28))
-        let space = AccountSpace(name: name)
+        var space = AccountSpace(name: name)
+        space.normalizeGroups()
 
         spaces.append(space)
         activeSpaceID = space.id
@@ -260,33 +289,138 @@ final class AppStore: ObservableObject {
         haptic(.impact)
     }
 
-    /// تحريك حساب خطوة واحدة داخل المساحة النشطة. الفهرس 0 هو أعلى القائمة.
+    /// تحريك حساب خطوة واحدة داخل مجموعته الحالية.
     func moveAccount(_ id: String, by offset: Int) {
-        guard let index = accounts.firstIndex(where: { $0.id == id }) else { return }
-        moveAccount(id, toPosition: index + offset)
+        guard let spaceIndex = spaces.firstIndex(where: { $0.id == activeSpaceID }),
+              let groupID = spaces[spaceIndex].groupMembership[id] else { return }
+        let members = accounts.filter { spaces[spaceIndex].groupMembership[$0.id] == groupID }
+        guard let index = members.firstIndex(where: { $0.id == id }) else { return }
+        moveAccount(id, toPositionInGroup: index + offset)
     }
 
-    /// تحريك حساب إلى أي موضع (0-based) داخل المساحة النشطة.
-    func moveAccount(_ id: String, toPosition position: Int) {
+    /// تحريك حساب إلى موضع داخل مجموعته الحالية (0-based).
+    func moveAccount(_ id: String, toPositionInGroup position: Int) {
         guard isDirect,
-              let index = accounts.firstIndex(where: { $0.id == id }),
-              !accounts.isEmpty else { return }
-        let target = min(max(position, 0), accounts.count - 1)
-        guard target != index else { return }
+              let spaceIndex = spaces.firstIndex(where: { $0.id == activeSpaceID }),
+              let groupID = spaces[spaceIndex].groupMembership[id] else { return }
 
-        var updated = accounts
-        let account = updated.remove(at: index)
-        updated.insert(account, at: target)
+        var members = accounts.filter { spaces[spaceIndex].groupMembership[$0.id] == groupID }
+        guard let current = members.firstIndex(where: { $0.id == id }) else { return }
+        let target = min(max(position, 0), members.count - 1)
+        guard target != current else { return }
+
+        let account = members.remove(at: current)
+        members.insert(account, at: target)
+
+        let updated = orderedAccounts(spaceIndex: spaceIndex, groupOverrides: [groupID: members])
         accounts = updated
         saveDirectAccounts()
         haptic(.impact)
     }
 
-    /// ينقل الحساب إلى أول موضع في المجموعة المحددة (0-based).
-    /// المجموعات هي تقسيمات القائمة الحالية: ٣ حسابات لكل مجموعة.
-    func moveAccount(_ id: String, toGroup group: Int, groupSize: Int = 3) {
-        guard group >= 0, groupSize > 0 else { return }
-        moveAccount(id, toPosition: group * groupSize)
+    /// ينقل الحساب إلى أول موضع في المجموعة المحددة.
+    /// يعيد `false` إذا كانت المجموعة ممتلئة.
+    @discardableResult
+    func moveAccount(_ id: String, toGroup groupID: String) -> Bool {
+        guard isDirect,
+              let spaceIndex = spaces.firstIndex(where: { $0.id == activeSpaceID }),
+              spaces[spaceIndex].groups.contains(where: { $0.id == groupID }),
+              let account = accounts.first(where: { $0.id == id }) else { return false }
+
+        let alreadyMember = spaces[spaceIndex].groupMembership[id] == groupID
+        let otherMembers = accounts.filter {
+            spaces[spaceIndex].groupMembership[$0.id] == groupID && $0.id != id
+        }
+        if !alreadyMember && otherMembers.count >= AccountGroup.capacity {
+            return false
+        }
+
+        var members = otherMembers
+        members.insert(account, at: 0)
+        spaces[spaceIndex].groupMembership[id] = groupID
+
+        let updated = orderedAccounts(spaceIndex: spaceIndex, groupOverrides: [groupID: members])
+        accounts = updated
+        saveDirectAccounts()
+        haptic(.impact)
+        return true
+    }
+
+    /// يبني ترتيب الحسابات من المجموعات بترتيبها، مع الحفاظ على
+    /// ترتيب كل مجموعة. يستخدم `groupOverrides` لإدراج ترتيب جديد
+    /// لمجموعة قبل أن يُحدّث في `accounts`.
+    private func orderedAccounts(spaceIndex: Int, groupOverrides: [String: [Account]] = [:]) -> [Account] {
+        guard spaces.indices.contains(spaceIndex) else { return accounts }
+        let membership = spaces[spaceIndex].groupMembership
+        var result: [Account] = []
+        var used = Set<String>()
+
+        for group in spaces[spaceIndex].groups {
+            let members = groupOverrides[group.id] ?? accounts.filter { membership[$0.id] == group.id }
+            for account in members where !used.contains(account.id) {
+                result.append(account)
+                used.insert(account.id)
+            }
+        }
+        for account in accounts where !used.contains(account.id) {
+            result.append(account)
+        }
+        return result
+    }
+
+    // MARK: - إدارة المجموعات
+
+    @discardableResult
+    func createGroup(named raw: String? = nil) -> AccountGroup? {
+        guard isDirect,
+              let index = spaces.firstIndex(where: { $0.id == activeSpaceID }) else { return nil }
+        let trimmed = (raw ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let name = trimmed.isEmpty
+            ? spaces[index].suggestedGroupName
+            : String(trimmed.prefix(30))
+        let group = AccountGroup(name: name)
+        spaces[index].groups.append(group)
+        saveDirectAccounts()
+        haptic(.success)
+        return group
+    }
+
+    @discardableResult
+    func renameGroup(_ id: String, to raw: String) -> Bool {
+        let name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty,
+              let index = spaces.firstIndex(where: { $0.id == activeSpaceID }),
+              let groupIndex = spaces[index].groups.firstIndex(where: { $0.id == id }) else { return false }
+        spaces[index].groups[groupIndex].name = String(name.prefix(30))
+        saveDirectAccounts()
+        haptic(.selection)
+        return true
+    }
+
+    /// يضمن أن الحساب الجديد ينتمي لمجموعة، مع إنشاء مجموعة جديدة
+    /// إذا كانت المجموعة الأخيرة ممتلئة.
+    private func assignToGroupIfNeeded(_ accountID: String) {
+        guard let spaceIndex = spaces.firstIndex(where: { $0.id == activeSpaceID }),
+              spaces[spaceIndex].groupMembership[accountID] == nil else { return }
+
+        if spaces[spaceIndex].groups.isEmpty {
+            spaces[spaceIndex].groups = [AccountGroup(name: "المجموعة 1")]
+        }
+
+        if let last = spaces[spaceIndex].groups.last {
+            // نعدّ الأعضاء الفعليين فقط؛ الحساب الجديد لم تُسند له مجموعة بعد.
+            let lastCount = accounts.reduce(0) { partial, account in
+                partial + (spaces[spaceIndex].groupMembership[account.id] == last.id ? 1 : 0)
+            }
+            if lastCount < AccountGroup.capacity {
+                spaces[spaceIndex].groupMembership[accountID] = last.id
+                return
+            }
+        }
+
+        let group = AccountGroup(name: spaces[spaceIndex].suggestedGroupName)
+        spaces[spaceIndex].groups.append(group)
+        spaces[spaceIndex].groupMembership[accountID] = group.id
     }
 
     private func mirrorAccountsIntoActiveSpace() {
@@ -301,7 +435,9 @@ final class AppStore: ObservableObject {
         guard spaces.isEmpty else { return }
         let names = ["علي", "مساحة ٢", "مساحة ٣"]
         spaces = names.enumerated().map { index, name in
-            AccountSpace(name: name, accounts: index == 0 ? accounts : [])
+            var space = AccountSpace(name: name, accounts: index == 0 ? accounts : [])
+            space.normalizeGroups()
+            return space
         }
         activeSpaceID = spaces.first?.id ?? ""
     }
@@ -660,6 +796,8 @@ final class AppStore: ObservableObject {
             // «نبض» يحافظ على الترتيب الأبجدي. «المتابعة» تحفظ الترتيب اليدوي
             // وتضع الحساب الجديد في نهاية المساحة.
             accounts.sort { $0.displayName.localizedCompare($1.displayName) == .orderedAscending }
+            #else
+            assignToGroupIfNeeded(placeholder.id)
             #endif
 
             do {
@@ -780,6 +918,9 @@ final class AppStore: ObservableObject {
         if isDirect {
             accounts.removeAll { $0.id == account.id }
             #if MUTABAA
+            if let index = spaces.firstIndex(where: { $0.id == activeSpaceID }) {
+                spaces[index].groupMembership.removeValue(forKey: account.id)
+            }
             // قد يكون الحساب نفسه مضافاً في مساحة أخرى؛ لا نحذف فيديوهاته حينها.
             let usedInAnotherSpace = spaces.contains { space in
                 space.accounts.contains { $0.handle == account.handle }
@@ -979,6 +1120,7 @@ final class AppStore: ObservableObject {
             spaces = saved.map { space in
                 var copy = space
                 copy.accounts = restoredAccounts(space.accounts)
+                copy.normalizeGroups()
                 return copy
             }
             if let active = payload.activeSpaceID,

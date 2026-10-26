@@ -41,6 +41,9 @@ struct AccountsView: View {
     @State private var showAdd = false
     @State private var pendingDelete: Account?
     @State private var movingAccount: Account?
+    #if MUTABAA
+    @State private var groupEditor: GroupEditorRequest?
+    #endif
 
     private var filtered: [Account] {
         let query = search.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -83,7 +86,11 @@ struct AccountsView: View {
                     emptyState
                 } else {
                     #if MUTABAA
-                    groupedAccountsList
+                    if sort == .manual || !store.spacesEnabled {
+                        groupedAccountsList
+                    } else {
+                        flatAccountsList
+                    }
                     #else
                     LazyVStack(spacing: 10) {
                         ForEach(filtered) { account in
@@ -127,6 +134,14 @@ struct AccountsView: View {
             EmptyView()
             #endif
         }
+        #if MUTABAA
+        .sheet(item: $groupEditor) { request in
+            GroupEditorSheet(mode: request.mode) { name in
+                saveGroupEditor(request, name: name)
+            }
+            .environmentObject(store)
+        }
+        #endif
         .confirmationDialog(
             "إزالة @\(pendingDelete?.handle ?? "")؟",
             isPresented: Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }),
@@ -208,73 +223,232 @@ struct AccountsView: View {
     }
 
     #if MUTABAA
-    private struct AccountGroup: Identifiable {
-        let id: Int
+    /// مجموعة كما تُعرض في القائمة، مع الحسابات المطابقة للبحث فقط.
+    private struct DisplayGroup: Identifiable {
+        let id: String
+        let name: String
         let accounts: [Account]
+        /// العدد الفعلي في المجموعة، وليس عدد نتائج البحث.
+        let totalCount: Int
+        let index: Int
+        let isManaged: Bool
     }
 
-    private var accountGroups: [AccountGroup] {
+    private struct GroupEditorRequest: Identifiable {
+        let id = UUID()
+        let groupID: String?
+        let mode: GroupEditorSheet.Mode
+    }
+
+    private var hasCustomGroups: Bool {
+        store.spacesEnabled && !store.groups.isEmpty
+    }
+
+    private var isSearching: Bool {
+        !search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var canReorder: Bool {
+        store.isDirect && sort == .manual && !isSearching
+    }
+
+    private var flatAccountsList: some View {
+        LazyVStack(spacing: 10) {
+            ForEach(filtered) { account in
+                accountCard(account)
+            }
+        }
+    }
+
+    private var displayGroups: [DisplayGroup] {
         guard !filtered.isEmpty else { return [] }
-        return stride(from: 0, to: filtered.count, by: 3).map { start in
-            AccountGroup(
-                id: start / 3,
-                accounts: Array(filtered[start..<min(start + 3, filtered.count)])
+
+        if hasCustomGroups && sort == .manual {
+            var result: [DisplayGroup] = []
+            var claimed = Set<String>()
+
+            for (index, group) in store.groups.enumerated() {
+                let members = filtered.filter { store.groupID(for: $0.id) == group.id }
+                claimed.formUnion(members.map(\.id))
+                if isSearching && members.isEmpty { continue }
+                result.append(
+                    DisplayGroup(
+                        id: group.id,
+                        name: group.name,
+                        accounts: members,
+                        totalCount: store.accounts(in: group.id).count,
+                        index: index,
+                        isManaged: true
+                    )
+                )
+            }
+
+            // لا نُخفي أي حساب إن كانت العضوية قديمة أو ناقصة.
+            let orphans = filtered.filter { !claimed.contains($0.id) }
+            if !orphans.isEmpty {
+                result.append(
+                    DisplayGroup(
+                        id: "__other",
+                        name: "حسابات أخرى",
+                        accounts: orphans,
+                        totalCount: orphans.count,
+                        index: store.groups.count,
+                        isManaged: false
+                    )
+                )
+            }
+            return result
+        }
+
+        // الوضع التجريبي/الخادم، أو الترتيب حسب مقياس: تقسيم بصري فقط.
+        let starts = stride(from: 0, to: filtered.count, by: AccountGroup.capacity)
+        return starts.enumerated().map { index, start in
+            let members = Array(filtered[start..<min(start + AccountGroup.capacity, filtered.count)])
+            return DisplayGroup(
+                id: "auto-\(index)",
+                name: "المجموعة \(Num.full(Int64(index + 1)))",
+                accounts: members,
+                totalCount: members.count,
+                index: index,
+                isManaged: false
             )
         }
     }
 
-    private var canReorder: Bool {
-        store.isDirect &&
-        sort == .manual &&
-        search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
     private var groupedAccountsList: some View {
         LazyVStack(spacing: 0) {
-            ForEach(accountGroups) { group in
+            if canReorder {
+                groupToolbar
+                    .padding(.bottom, 12)
+            }
+
+            ForEach(displayGroups) { group in
                 groupSection(group)
-                if group.id < accountGroups.count - 1 {
+                if group.id != displayGroups.last?.id {
                     groupSeparator
                 }
             }
         }
     }
 
-    private func groupSection(_ group: AccountGroup) -> some View {
-        let accent = Theme.chartPalette[group.id % Theme.chartPalette.count]
+    private var groupToolbar: some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 5) {
+                    Image(systemName: "square.stack.3d.up.fill")
+                        .font(.system(size: 10, weight: .bold))
+                    Text("المجموعات")
+                        .font(.system(size: 11.5, weight: .bold, design: .rounded))
+                }
+                .foregroundColor(Theme.cyan)
+
+                Text("\(Num.full(Int64(store.groups.count))) مجموعات · حتى \(Num.full(Int64(AccountGroup.capacity))) حسابات لكل مجموعة")
+                    .font(.system(size: 9.5))
+                    .foregroundColor(Theme.textTertiary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+
+            Spacer(minLength: 4)
+
+            Button {
+                beginCreateGroup()
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 9.5, weight: .bold))
+                    Text("مجموعة جديدة")
+                        .font(.system(size: 10.5, weight: .bold))
+                }
+                .foregroundColor(Theme.cyan)
+                .padding(.horizontal, 10)
+                .frame(height: 30)
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Theme.cyan.opacity(0.10))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(Theme.cyan.opacity(0.22), lineWidth: 1)
+                )
+            }
+            .buttonStyle(PressableStyle(scale: 0.97))
+            .accessibilityIdentifier("create-group")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Theme.surface.opacity(0.72))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(Theme.borderSoft, lineWidth: 1)
+        )
+    }
+
+    private func groupSection(_ group: DisplayGroup) -> some View {
+        let accent = Theme.chartPalette[group.index % Theme.chartPalette.count]
         return VStack(spacing: 10) {
             HStack(spacing: 7) {
                 Circle()
                     .fill(accent)
                     .frame(width: 7, height: 7)
                     .shadow(color: accent.opacity(0.7), radius: 4)
-                Text("المجموعة \(Num.full(Int64(group.id + 1)))")
+                Text(group.name)
                     .font(.system(size: 11, weight: .bold, design: .rounded))
                     .foregroundColor(accent)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
                 Text("·")
                     .font(.system(size: 10))
                     .foregroundColor(Theme.textTertiary)
-                Text("\(Num.full(Int64(group.accounts.count))) من الحسابات")
+                Text("\(Num.full(Int64(group.totalCount))) من \(Num.full(Int64(AccountGroup.capacity)))")
                     .font(.system(size: 9.5))
                     .foregroundColor(Theme.textTertiary)
-                Spacer(minLength: 0)
-                if canReorder {
-                    HStack(spacing: 4) {
-                        Image(systemName: "line.3.horizontal")
-                            .font(.system(size: 9, weight: .bold))
-                        Text("رتّب بالأسهم أو انقل إلى مجموعة")
-                            .font(.system(size: 8.5))
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+
+                if group.isManaged && canReorder {
+                    Button {
+                        beginRenameGroup(group)
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "pencil")
+                                .font(.system(size: 8.5, weight: .bold))
+                            Text("تسمية")
+                                .font(.system(size: 9, weight: .semibold))
+                        }
+                        .foregroundColor(Theme.textSecondary)
+                        .padding(.horizontal, 8)
+                        .frame(height: 24)
+                        .background(Capsule().fill(Theme.surface.opacity(0.8)))
+                        .overlay(Capsule().strokeBorder(Theme.borderSoft, lineWidth: 1))
                     }
-                    .foregroundColor(Theme.textTertiary)
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("rename-group-\(group.index + 1)")
                 }
             }
             .padding(.horizontal, 4)
 
-            ForEach(group.accounts) { account in
-                VStack(spacing: 8) {
-                    accountCard(account)
-                    if canReorder {
-                        reorderBar(account)
+            if group.accounts.isEmpty {
+                HStack(spacing: 6) {
+                    Image(systemName: "tray")
+                        .font(.system(size: 10, weight: .semibold))
+                    Text(isSearching ? "لا نتائج في هذه المجموعة" : "لا حسابات في هذه المجموعة بعد")
+                        .font(.system(size: 9.5))
+                    Spacer(minLength: 0)
+                }
+                .foregroundColor(Theme.textTertiary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 12)
+            } else {
+                ForEach(group.accounts) { account in
+                    VStack(spacing: 8) {
+                        accountCard(account)
+                        if canReorder {
+                            reorderBar(account)
+                        }
                     }
                 }
             }
@@ -298,6 +472,38 @@ struct AccountsView: View {
             RoundedRectangle(cornerRadius: 26, style: .continuous)
                 .strokeBorder(accent.opacity(0.24), lineWidth: 1)
         )
+    }
+
+    private func beginCreateGroup() {
+        store.haptic(.selection)
+        groupEditor = GroupEditorRequest(
+            groupID: nil,
+            mode: .create(
+                suggestedName: store.suggestedGroupName,
+                groupCount: store.groups.count
+            )
+        )
+    }
+
+    private func beginRenameGroup(_ group: DisplayGroup) {
+        guard group.isManaged,
+              let stored = store.groups.first(where: { $0.id == group.id }) else { return }
+        store.haptic(.selection)
+        groupEditor = GroupEditorRequest(
+            groupID: stored.id,
+            mode: .rename(currentName: stored.name, memberCount: group.totalCount)
+        )
+    }
+
+    private func saveGroupEditor(_ request: GroupEditorRequest, name: String) -> Bool {
+        if let groupID = request.groupID {
+            guard store.renameGroup(groupID, to: name) else { return false }
+            store.showToast("تم تغيير اسم المجموعة", .success)
+            return true
+        }
+        guard let group = store.createGroup(named: name) else { return false }
+        store.showToast("تم إنشاء «\(group.name)»", .success)
+        return true
     }
 
     private var groupSeparator: some View {
@@ -338,13 +544,22 @@ struct AccountsView: View {
     }
 
     private func reorderBar(_ account: Account) -> some View {
-        let index = store.accounts.firstIndex(where: { $0.id == account.id }) ?? 0
-        let count = store.accounts.count
+        let info = store.groupInfo(for: account.id)
+        let index = info?.index ?? (store.accounts.firstIndex(where: { $0.id == account.id }) ?? 0)
+        let count = max(info?.total ?? store.accounts.count, 1)
+        let positionText: String
+        if let info {
+            positionText = "\(info.group.name) · الموضع \(Num.full(Int64(info.index + 1))) من \(Num.full(Int64(info.total)))"
+        } else {
+            positionText = "الموضع \(Num.full(Int64(index + 1))) من \(Num.full(Int64(count)))"
+        }
 
         return HStack(spacing: 8) {
-            Text("المجموعة \(Num.full(Int64(index / 3 + 1))) · الموضع \(Num.full(Int64(index + 1))) من \(Num.full(Int64(count)))")
+            Text(positionText)
                 .font(.system(size: 9.5, weight: .medium, design: .rounded))
                 .foregroundColor(Theme.textTertiary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.65)
 
             Spacer(minLength: 4)
 

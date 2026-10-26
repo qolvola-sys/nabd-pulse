@@ -2,42 +2,34 @@ import SwiftUI
 import UIKit
 
 #if MUTABAA
-/// نافذة اختيار المجموعة التي يُنقل إليها الحساب داخل المساحة النشطة.
-/// المجموعات هي نفس تقسيمات قائمة «المتابعة» (٣ حسابات لكل مجموعة)،
-/// واختيار مجموعة ينقل الحساب إلى أول موضع فيها مع إبقاء أدوات الضبط الدقيق.
+/// نافذة إدارة مجموعات الحساب داخل المساحة النشطة.
+/// تسمح بالنقل إلى أي مجموعة (حتى ٧ حسابات)، وإنشاء مجموعة
+/// جديدة ونقل الحساب إليها، وإعادة تسمية أي مجموعة، مع
+/// ضبط دقيق للموضع داخل المجموعة الحالية.
 struct MoveAccountSheet: View {
     @EnvironmentObject private var store: AppStore
     @Environment(\.dismiss) private var dismiss
 
     let account: Account
 
-    private let groupSize = 3
+    @State private var groupEditor: GroupEditorRequest?
 
-    private struct AccountGroup: Identifiable {
-        let id: Int
-        let accounts: [Account]
-    }
-
-    private var currentIndex: Int {
-        store.accounts.firstIndex(where: { $0.id == account.id }) ?? 0
-    }
-
-    private var total: Int {
-        max(store.accounts.count, 1)
-    }
-
-    private var currentGroupIndex: Int {
-        currentIndex / groupSize
+    private struct GroupEditorRequest: Identifiable {
+        let id = UUID()
+        let groupID: String?
+        let mode: GroupEditorSheet.Mode
     }
 
     private var groups: [AccountGroup] {
-        guard !store.accounts.isEmpty else { return [] }
-        return stride(from: 0, to: store.accounts.count, by: groupSize).map { start in
-            AccountGroup(
-                id: start / groupSize,
-                accounts: Array(store.accounts[start..<min(start + groupSize, store.accounts.count)])
-            )
-        }
+        store.groups
+    }
+
+    private var currentGroupID: String? {
+        store.groupID(for: account.id)
+    }
+
+    private var currentInfo: (group: AccountGroup, index: Int, total: Int)? {
+        store.groupInfo(for: account.id)
     }
 
     var body: some View {
@@ -53,6 +45,12 @@ struct MoveAccountSheet: View {
         }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
+        .sheet(item: $groupEditor) { request in
+            GroupEditorSheet(mode: request.mode) { name in
+                saveGroupEditor(request, name: name)
+            }
+            .environmentObject(store)
+        }
     }
 
     private var header: some View {
@@ -63,11 +61,11 @@ struct MoveAccountSheet: View {
                 Text("نقل إلى مجموعة")
                     .font(.system(size: 18, weight: .heavy, design: .rounded))
                     .foregroundColor(Theme.text)
-                Text("@\(account.handle) · المجموعة \(Num.full(Int64(currentGroupIndex + 1))) من \(Num.full(Int64(max(groups.count, 1))))")
+                Text(headerSubtitle)
                     .font(.system(size: 10.5))
                     .foregroundColor(Theme.textSecondary)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.7)
+                    .minimumScaleFactor(0.65)
             }
 
             Spacer(minLength: 4)
@@ -86,148 +84,241 @@ struct MoveAccountSheet: View {
         .padding(.horizontal, 18)
     }
 
+    private var headerSubtitle: String {
+        guard let info = currentInfo else {
+            return "@\(account.handle) · بدون مجموعة"
+        }
+        return "@\(account.handle) · \(info.group.name) · \(Num.full(Int64(info.index + 1))) من \(Num.full(Int64(info.total)))"
+    }
+
     private var groupList: some View {
         ScrollView(showsIndicators: false) {
             LazyVStack(spacing: 9) {
-                ForEach(groups) { group in
-                    groupRow(group)
+                ForEach(Array(groups.enumerated()), id: \.element.id) { index, group in
+                    groupRow(group, index: index)
                 }
 
-                if groups.count <= 1 {
-                    Text("أضف حسابات أكثر لتظهر مجموعات إضافية يمكن النقل بينها.")
-                        .font(.system(size: 10))
-                        .foregroundColor(Theme.textTertiary)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 20)
-                        .padding(.top, 4)
-                }
+                createGroupButton
+                    .padding(.top, 2)
+
+                Text("تتسع كل مجموعة حتى \(Num.full(Int64(AccountGroup.capacity))) حسابات. اسم أي مجموعة قابل للتغيير في أي وقت.")
+                    .font(.system(size: 9.5))
+                    .foregroundColor(Theme.textTertiary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 4)
             }
             .padding(.horizontal, 18)
             .padding(.bottom, 8)
         }
     }
 
-    private func groupRow(_ group: AccountGroup) -> some View {
-        let accent = Theme.chartPalette[group.id % Theme.chartPalette.count]
-        let isCurrent = group.id == currentGroupIndex
-        let isFront = isCurrent && currentIndex == group.id * groupSize
+    private func groupRow(_ group: AccountGroup, index: Int) -> some View {
+        let accent = Theme.chartPalette[index % Theme.chartPalette.count]
+        let members = store.accounts(in: group.id)
+        let isCurrent = group.id == currentGroupID
+        let isAtTop = isCurrent && (currentInfo?.index ?? 0) == 0
+        let isFull = members.count >= AccountGroup.capacity
+        let canMove = !isAtTop && (isCurrent || !isFull)
 
-        return Button {
-            move(toGroup: group.id)
-        } label: {
-            HStack(spacing: 11) {
-                Text(Num.full(Int64(group.id + 1)))
-                    .font(.system(size: 16, weight: .heavy, design: .rounded))
-                    .foregroundColor(isCurrent ? Color(hex: 0x061016) : accent)
-                    .frame(width: 44, height: 44)
-                    .background(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(isCurrent ? accent : accent.opacity(0.12))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .strokeBorder(isCurrent ? .clear : accent.opacity(0.24), lineWidth: 1)
-                    )
+        return HStack(spacing: 8) {
+            Button {
+                move(to: group, memberCount: members.count, isCurrent: isCurrent)
+            } label: {
+                HStack(spacing: 11) {
+                    Text(Num.full(Int64(index + 1)))
+                        .font(.system(size: 16, weight: .heavy, design: .rounded))
+                        .foregroundColor(isCurrent ? Color(hex: 0x061016) : accent)
+                        .frame(width: 42, height: 42)
+                        .background(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .fill(isCurrent ? accent : accent.opacity(0.12))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .strokeBorder(isCurrent ? .clear : accent.opacity(0.24), lineWidth: 1)
+                        )
 
-                VStack(alignment: .leading, spacing: 5) {
-                    HStack(spacing: 6) {
-                        Text("المجموعة \(Num.full(Int64(group.id + 1)))")
-                            .font(.system(size: 12.5, weight: .bold))
-                            .foregroundColor(Theme.text)
-                        if isCurrent {
-                            Text("الحالية")
-                                .font(.system(size: 8.5, weight: .bold))
-                                .foregroundColor(accent)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2.5)
-                                .background(Capsule().fill(accent.opacity(0.12)))
-                        }
-                    }
-
-                    HStack(spacing: 6) {
-                        HStack(spacing: -7) {
-                            ForEach(group.accounts) { member in
-                                AvatarView(account: member, size: 20, showVerified: false)
-                                    .overlay(Circle().strokeBorder(Theme.surface, lineWidth: 1.5))
+                    VStack(alignment: .leading, spacing: 5) {
+                        HStack(spacing: 6) {
+                            Text(group.name)
+                                .font(.system(size: 12.5, weight: .bold))
+                                .foregroundColor(Theme.text)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.7)
+                            if isCurrent {
+                                Text("الحالية")
+                                    .font(.system(size: 8.5, weight: .bold))
+                                    .foregroundColor(accent)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2.5)
+                                    .background(Capsule().fill(accent.opacity(0.12)))
                             }
                         }
-                        Text("\(Num.full(Int64(group.accounts.count))) من الحسابات")
-                            .font(.system(size: 9))
-                            .foregroundColor(Theme.textTertiary)
-                    }
-                }
 
-                Spacer(minLength: 4)
+                        HStack(spacing: 6) {
+                            HStack(spacing: -7) {
+                                ForEach(members.prefix(5)) { member in
+                                    AvatarView(account: member, size: 20, showVerified: false)
+                                        .overlay(Circle().strokeBorder(Theme.surface, lineWidth: 1.5))
+                                }
+                            }
+                            Text("\(Num.full(Int64(members.count))) من \(Num.full(Int64(AccountGroup.capacity)))")
+                                .font(.system(size: 9))
+                                .foregroundColor(isFull ? Theme.gold : Theme.textTertiary)
+                        }
+                    }
 
-                if isFront {
-                    VStack(spacing: 2) {
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 15, weight: .bold))
-                        Text("في المقدمة")
-                            .font(.system(size: 8, weight: .semibold))
-                    }
-                    .foregroundColor(accent)
-                } else {
-                    VStack(spacing: 2) {
-                        Image(systemName: "arrow.turn.down.left")
-                            .font(.system(size: 13, weight: .bold))
-                        Text(isCurrent ? "إلى المقدمة" : "نقل")
-                            .font(.system(size: 8.5, weight: .semibold))
-                    }
-                    .foregroundColor(Theme.cyan)
+                    Spacer(minLength: 4)
+
+                    statusLabel(
+                        isAtTop: isAtTop,
+                        isCurrent: isCurrent,
+                        isFull: isFull,
+                        accent: accent
+                    )
                 }
+                .contentShape(Rectangle())
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 9)
+            .buttonStyle(PressableStyle(scale: 0.99))
+            .disabled(!canMove)
+            .accessibilityIdentifier("move-group-\(index + 1)")
+
+            Button {
+                beginRename(group, memberCount: members.count)
+            } label: {
+                Image(systemName: "pencil")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(Theme.textSecondary)
+                    .frame(width: 30, height: 30)
+                    .background(Circle().fill(Theme.surfaceRaised.opacity(0.9)))
+            }
+            .buttonStyle(PressableStyle(scale: 0.96))
+            .accessibilityIdentifier("rename-group-\(index + 1)")
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 9)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(isCurrent ? accent.opacity(0.08) : Theme.surface.opacity(0.9))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(isCurrent ? accent.opacity(0.34) : Theme.borderSoft, lineWidth: 1)
+        )
+        .opacity(canMove ? 1 : 0.78)
+    }
+
+    @ViewBuilder
+    private func statusLabel(isAtTop: Bool, isCurrent: Bool, isFull: Bool, accent: Color) -> some View {
+        if isAtTop {
+            VStack(spacing: 2) {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 15, weight: .bold))
+                Text("في المقدمة")
+                    .font(.system(size: 8, weight: .semibold))
+            }
+            .foregroundColor(accent)
+        } else if isCurrent {
+            VStack(spacing: 2) {
+                Image(systemName: "arrow.up.to.line")
+                    .font(.system(size: 13, weight: .bold))
+                Text("إلى المقدمة")
+                    .font(.system(size: 8.5, weight: .semibold))
+            }
+            .foregroundColor(Theme.cyan)
+        } else if isFull {
+            VStack(spacing: 2) {
+                Image(systemName: "lock.fill")
+                    .font(.system(size: 12, weight: .bold))
+                Text("ممتلئة")
+                    .font(.system(size: 8.5, weight: .semibold))
+            }
+            .foregroundColor(Theme.gold)
+        } else {
+            VStack(spacing: 2) {
+                Image(systemName: "arrow.turn.down.left")
+                    .font(.system(size: 13, weight: .bold))
+                Text("نقل")
+                    .font(.system(size: 8.5, weight: .semibold))
+            }
+            .foregroundColor(Theme.cyan)
+        }
+    }
+
+    private var createGroupButton: some View {
+        Button {
+            beginCreateGroup()
+        } label: {
+            HStack(spacing: 7) {
+                Image(systemName: "plus")
+                    .font(.system(size: 10, weight: .bold))
+                Text("مجموعة جديدة")
+                    .font(.system(size: 11, weight: .bold))
+                Spacer(minLength: 4)
+                Text("وتنقل الحساب إليها")
+                    .font(.system(size: 9))
+                    .foregroundColor(Theme.textTertiary)
+            }
+            .foregroundColor(Theme.cyan)
+            .padding(.horizontal, 12)
+            .frame(height: 42)
             .background(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(isCurrent ? accent.opacity(0.08) : Theme.surface.opacity(0.9))
+                RoundedRectangle(cornerRadius: 13, style: .continuous)
+                    .fill(Theme.cyan.opacity(0.08))
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .strokeBorder(isCurrent ? accent.opacity(0.34) : Theme.borderSoft, lineWidth: 1)
+                RoundedRectangle(cornerRadius: 13, style: .continuous)
+                    .strokeBorder(Theme.cyan.opacity(0.20), lineWidth: 1)
             )
-            .contentShape(Rectangle())
         }
         .buttonStyle(PressableStyle(scale: 0.99))
-        .disabled(isFront)
-        .opacity(isFront ? 0.82 : 1)
-        .accessibilityIdentifier("move-group-\(group.id + 1)")
+        .accessibilityIdentifier("create-group-sheet")
     }
 
     private var fineTuning: some View {
-        VStack(spacing: 8) {
+        let info = currentInfo
+        let index = info?.index ?? 0
+        let total = max(info?.total ?? 1, 1)
+        let groupName = info?.group.name ?? "بدون مجموعة"
+        let canMoveUp = info != nil && index > 0
+        let canMoveDown = info != nil && index < total - 1
+
+        return VStack(spacing: 8) {
             HStack(spacing: 6) {
                 Image(systemName: "slider.horizontal.3")
                     .font(.system(size: 9, weight: .bold))
-                Text("ضبط دقيق")
+                Text("ضبط دقيق داخل \(groupName)")
                     .font(.system(size: 10, weight: .bold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
                 Spacer(minLength: 4)
-                Text("الموضع \(Num.full(Int64(currentIndex + 1))) من \(Num.full(Int64(total)))")
+                Text("الموضع \(Num.full(Int64(index + 1))) من \(Num.full(Int64(total)))")
                     .font(.system(size: 9.5, weight: .medium, design: .rounded))
+                    .lineLimit(1)
             }
             .foregroundColor(Theme.textTertiary)
 
             HStack(spacing: 8) {
-                fineButton(title: "أعلى القائمة", icon: "arrow.up.to.line", enabled: currentIndex > 0) {
-                    move(toPosition: 0)
+                fineButton(title: "أعلى المجموعة", icon: "arrow.up.to.line", enabled: canMoveUp) {
+                    moveToGroupTop()
                 }
-                fineButton(title: "خطوة لأعلى", icon: "chevron.up", enabled: currentIndex > 0) {
-                    move(by: -1)
+                fineButton(title: "خطوة لأعلى", icon: "chevron.up", enabled: canMoveUp) {
+                    moveWithinGroup(by: -1)
                 }
             }
 
             HStack(spacing: 8) {
-                fineButton(title: "خطوة لأسفل", icon: "chevron.down", enabled: currentIndex < total - 1) {
-                    move(by: 1)
+                fineButton(title: "خطوة لأسفل", icon: "chevron.down", enabled: canMoveDown) {
+                    moveWithinGroup(by: 1)
                 }
-                fineButton(title: "أسفل القائمة", icon: "arrow.down.to.line", enabled: currentIndex < total - 1) {
-                    move(toPosition: total - 1)
+                fineButton(title: "أسفل المجموعة", icon: "arrow.down.to.line", enabled: canMoveDown) {
+                    moveToGroupBottom()
                 }
             }
         }
         .padding(.horizontal, 18)
-        .padding(.top, 6)
+        .padding(.top, 8)
         .padding(.bottom, 14)
         .background(
             LinearGradient(
@@ -262,26 +353,91 @@ struct MoveAccountSheet: View {
         .disabled(!enabled)
     }
 
-    private func move(toGroup group: Int) {
-        let target = group * groupSize
-        guard target != currentIndex else { return }
-        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-            store.moveAccount(account.id, toGroup: group, groupSize: groupSize)
+    private func move(to group: AccountGroup, memberCount: Int, isCurrent: Bool) {
+        if isCurrent {
+            guard let info = currentInfo, info.index > 0 else { return }
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                store.moveAccount(account.id, toPositionInGroup: 0)
+            }
+            store.showToast("تم نقل @\(account.handle) إلى مقدمة \(group.name)", .success)
+            return
         }
-        store.showToast("تم نقل @\(account.handle) إلى المجموعة \(Num.full(Int64(group + 1)))", .success)
+
+        guard memberCount < AccountGroup.capacity else {
+            store.showToast(
+                "المجموعة ممتلئة — السعة \(Num.full(Int64(AccountGroup.capacity))) حسابات",
+                .info
+            )
+            return
+        }
+
+        let moved = withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+            store.moveAccount(account.id, toGroup: group.id)
+        }
+        guard moved else {
+            store.showToast("تعذّر نقل الحساب إلى هذه المجموعة", .info)
+            return
+        }
+        store.showToast("تم نقل @\(account.handle) إلى \(group.name)", .success)
         dismiss()
     }
 
-    private func move(toPosition position: Int) {
+    private func moveToGroupTop() {
         withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-            store.moveAccount(account.id, toPosition: position)
+            store.moveAccount(account.id, toPositionInGroup: 0)
         }
     }
 
-    private func move(by offset: Int) {
+    private func moveToGroupBottom() {
+        guard let info = currentInfo else { return }
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+            store.moveAccount(account.id, toPositionInGroup: info.total - 1)
+        }
+    }
+
+    private func moveWithinGroup(by offset: Int) {
         withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
             store.moveAccount(account.id, by: offset)
         }
+    }
+
+    private func beginCreateGroup() {
+        store.haptic(.selection)
+        groupEditor = GroupEditorRequest(
+            groupID: nil,
+            mode: .create(
+                suggestedName: store.suggestedGroupName,
+                groupCount: store.groups.count
+            )
+        )
+    }
+
+    private func beginRename(_ group: AccountGroup, memberCount: Int) {
+        store.haptic(.selection)
+        groupEditor = GroupEditorRequest(
+            groupID: group.id,
+            mode: .rename(currentName: group.name, memberCount: memberCount)
+        )
+    }
+
+    private func saveGroupEditor(_ request: GroupEditorRequest, name: String) -> Bool {
+        if let groupID = request.groupID {
+            guard store.renameGroup(groupID, to: name) else { return false }
+            store.showToast("تم تغيير اسم المجموعة", .success)
+            return true
+        }
+
+        guard let group = store.createGroup(named: name) else { return false }
+        if store.moveAccount(account.id, toGroup: group.id) {
+            store.showToast("تم إنشاء «\(group.name)» ونقل @\(account.handle) إليها", .success)
+            // تُغلق نافذة التسمية أولًا، ثم نافذة النقل بعدها بقليل.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                dismiss()
+            }
+        } else {
+            store.showToast("تم إنشاء «\(group.name)» — انقل الحساب إليها من القائمة", .info)
+        }
+        return true
     }
 }
 #endif

@@ -1,0 +1,43 @@
+name: Mutabaa Groups 7 Check
+
+on:
+  push:
+    branches:
+      - "mutabaa-groups-7"
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Mutabaa for simulator
+    runs-on: macos-15
+    timeout-minutes: 35
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate project
+        run: xcodegen generate
+
+      - name: Build Mutabaa
+        run: |
+          xcodebuild \
+            -project Nabd.xcodeproj \
+            -scheme Mutabaa \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build-sim \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build
+
+      - name: Inspect app bundle
+        run: |
+          APP=$(find build-sim/Build/Products -maxdepth 3 -name "Mutabaa.app" | head -1)
+          echo "APP=$APP"
+          plutil -p "$APP/Info.plist" | grep -E "CFBundleShortVersionString|CFBundleVersion|CFBundleIdentifier" || true
+          plutil -p "$APP/Info.plist" | grep -i -A4 "Localizations" || true
+          ls "$APP" | grep -i lproj || echo "no lproj"
