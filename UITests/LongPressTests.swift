@@ -96,10 +96,21 @@ final class LongPressTests: XCTestCase {
             app.swipeUp()
         }
         sleep(1)
-        let position = app.staticTexts
-            .matching(NSPredicate(format: "label CONTAINS %@", "الموضع 4 من 4"))
-            .firstMatch
-        XCTAssertTrue(position.waitForExistence(timeout: 8), "Account position did not update to group 2")
+
+        // SwiftUI يضيف علامات اتجاه مخفية حول الأرقام داخل النص،
+        // لذا نزيلها قبل مقارنة موضع الحساب.
+        let barLabels = app.staticTexts
+            .matching(NSPredicate(format: "label CONTAINS %@", "الموضع"))
+            .allElementsBoundByIndex
+            .map { element in
+                element.label
+                    .replacingOccurrences(of: "\u{2068}", with: "")
+                    .replacingOccurrences(of: "\u{2069}", with: "")
+            }
+        XCTAssertTrue(
+            barLabels.contains { $0.contains("الموضع 4 من 4") },
+            "Account position did not update to group 2"
+        )
         attach("group-two-position")
     }
 }
