@@ -37,7 +37,21 @@ struct ConnectionReport {
 @MainActor
 final class AppStore: ObservableObject {
     // البيانات
-    @Published private(set) var accounts: [Account] = []
+    @Published private(set) var accounts: [Account] = [] {
+        didSet {
+            #if MUTABAA
+            mirrorAccountsIntoActiveSpace()
+            #endif
+        }
+    }
+
+    #if MUTABAA
+    /// مساحات «المتابعة»: لكل مساحة حساباتها وترتيبها وإحصاءاتها.
+    @Published private(set) var spaces: [AccountSpace] = []
+    @Published private(set) var activeSpaceID = ""
+    private var isSwitchingSpace = false
+    #endif
+
     @Published private(set) var summary: Summary = .empty
     @Published private(set) var source: DataSource = .empty
     @Published private(set) var serverInfo: ServerMeta?
@@ -145,6 +159,158 @@ final class AppStore: ObservableObject {
         accounts.filter { $0.status == "needs_reconnect" }
     }
 
+    #if MUTABAA
+    // MARK: - المساحات (المتابعة)
+
+    var activeSpace: AccountSpace? {
+        spaces.first { $0.id == activeSpaceID }
+    }
+
+    var activeSpaceName: String {
+        activeSpace?.name ?? AppVariant.name
+    }
+
+    /// الشريط العلوي يظهر فقط في الوضع المباشر حيث توجد مساحات محفوظة.
+    var spacesEnabled: Bool {
+        !spaces.isEmpty && !isDemo && !useServer
+    }
+
+    func selectSpace(_ id: String) {
+        guard isDirect,
+              id != activeSpaceID,
+              spaces.contains(where: { $0.id == id }) else { return }
+
+        // نحفظ ترتيب المساحة الحالية قبل الانتقال.
+        if let index = spaces.firstIndex(where: { $0.id == activeSpaceID }) {
+            spaces[index].accounts = accounts
+        }
+        let target = spaces.first(where: { $0.id == id })?.accounts ?? []
+
+        activeSpaceID = id
+        isSwitchingSpace = true
+        accounts = target
+        isSwitchingSpace = false
+        summary = Summary.make(from: accounts)
+        source = accounts.isEmpty ? .empty : .direct
+        errorMessage = nil
+        lastRefreshed = Dates.parse(summary.lastSyncedAt)
+        saveDirectAccounts()
+        haptic(.selection)
+    }
+
+    @discardableResult
+    func createSpace(named raw: String) -> Bool {
+        guard isDirect else { return false }
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let name = trimmed.isEmpty
+            ? "مساحة \(spaces.count + 1)"
+            : String(trimmed.prefix(28))
+        let space = AccountSpace(name: name)
+
+        spaces.append(space)
+        activeSpaceID = space.id
+        isSwitchingSpace = true
+        accounts = []
+        isSwitchingSpace = false
+        summary = .empty
+        source = .empty
+        errorMessage = nil
+        lastRefreshed = nil
+        saveDirectAccounts()
+        haptic(.success)
+        return true
+    }
+
+    func renameSpace(_ id: String, to raw: String) {
+        let name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty,
+              let index = spaces.firstIndex(where: { $0.id == id }) else { return }
+        spaces[index].name = String(name.prefix(28))
+        saveDirectAccounts()
+        haptic(.selection)
+    }
+
+    func deleteSpace(_ id: String) {
+        guard spaces.count > 1,
+              let index = spaces.firstIndex(where: { $0.id == id }) else { return }
+        let wasActive = id == activeSpaceID
+        spaces.remove(at: index)
+
+        if wasActive, !spaces.isEmpty {
+            let target = spaces[min(index, spaces.count - 1)]
+            activeSpaceID = target.id
+            isSwitchingSpace = true
+            accounts = target.accounts
+            isSwitchingSpace = false
+            summary = Summary.make(from: accounts)
+            source = accounts.isEmpty ? .empty : .direct
+            errorMessage = nil
+            lastRefreshed = Dates.parse(summary.lastSyncedAt)
+        }
+        saveDirectAccounts()
+        haptic(.success)
+    }
+
+    func moveSpace(_ id: String, by offset: Int) {
+        guard let index = spaces.firstIndex(where: { $0.id == id }) else { return }
+        let target = index + offset
+        guard spaces.indices.contains(target), target != index else { return }
+        spaces.swapAt(index, target)
+        saveDirectAccounts()
+        haptic(.impact)
+    }
+
+    /// تحريك حساب خطوة واحدة داخل المساحة النشطة. الفهرس 0 هو أعلى القائمة.
+    func moveAccount(_ id: String, by offset: Int) {
+        guard let index = accounts.firstIndex(where: { $0.id == id }) else { return }
+        moveAccount(id, toPosition: index + offset)
+    }
+
+    /// تحريك حساب إلى أي موضع (0-based) داخل المساحة النشطة.
+    func moveAccount(_ id: String, toPosition position: Int) {
+        guard isDirect,
+              let index = accounts.firstIndex(where: { $0.id == id }),
+              !accounts.isEmpty else { return }
+        let target = min(max(position, 0), accounts.count - 1)
+        guard target != index else { return }
+
+        var updated = accounts
+        let account = updated.remove(at: index)
+        updated.insert(account, at: target)
+        accounts = updated
+        saveDirectAccounts()
+        haptic(.impact)
+    }
+
+    private func mirrorAccountsIntoActiveSpace() {
+        guard isDirect,
+              !isSwitchingSpace,
+              !activeSpaceID.isEmpty,
+              let index = spaces.firstIndex(where: { $0.id == activeSpaceID }) else { return }
+        spaces[index].accounts = accounts
+    }
+
+    private func seedSpacesIfNeeded(with accounts: [Account]) {
+        guard spaces.isEmpty else { return }
+        let names = ["علي", "مساحة ٢", "مساحة ٣"]
+        spaces = names.enumerated().map { index, name in
+            AccountSpace(name: name, accounts: index == 0 ? accounts : [])
+        }
+        activeSpaceID = spaces.first?.id ?? ""
+    }
+
+    private func restoredAccounts(_ accounts: [Account]) -> [Account] {
+        accounts.map { account in
+            var stable = account
+            if stable.status == "error" {
+                stable.status = (stable.fetchedVideos > 0 || stable.views > 0) ? "cached" : "pending"
+            }
+            stable.error = nil
+            return stable
+        }
+    }
+    #endif
+
     // MARK: - الإقلاع
 
     func bootstrap() {
@@ -178,7 +344,15 @@ final class AppStore: ObservableObject {
         if isDemo {
             loadDemo()
         } else {
+            #if MUTABAA
+            // لا نكتب قائمة فارغة فوق المساحة النشطة أثناء تبديل المصدر؛
+            // التحميل التالي من التخزين سيعيد حسابات المساحة كما هي.
+            isSwitchingSpace = true
             accounts = []
+            isSwitchingSpace = false
+            #else
+            accounts = []
+            #endif
             summary = .empty
             source = .empty
             errorMessage = nil
@@ -475,7 +649,11 @@ final class AppStore: ObservableObject {
                 createdAt: ISO8601DateFormatter.nabd.string(from: Date())
             )
             accounts.append(placeholder)
+            #if !MUTABAA
+            // «نبض» يحافظ على الترتيب الأبجدي. «المتابعة» تحفظ الترتيب اليدوي
+            // وتضع الحساب الجديد في نهاية المساحة.
             accounts.sort { $0.displayName.localizedCompare($1.displayName) == .orderedAscending }
+            #endif
 
             do {
                 let result = try await direct.fetch(handle: handle)
@@ -594,7 +772,17 @@ final class AppStore: ObservableObject {
         }
         if isDirect {
             accounts.removeAll { $0.id == account.id }
+            #if MUTABAA
+            // قد يكون الحساب نفسه مضافاً في مساحة أخرى؛ لا نحذف فيديوهاته حينها.
+            let usedInAnotherSpace = spaces.contains { space in
+                space.accounts.contains { $0.handle == account.handle }
+            }
+            if !usedInAnotherSpace {
+                directVideos.removeValue(forKey: account.handle)
+            }
+            #else
             directVideos.removeValue(forKey: account.handle)
+            #endif
             summary = Summary.make(from: accounts)
             saveDirectAccounts()
             showToast("تم حذف @\(account.handle)", .success)
@@ -727,6 +915,10 @@ final class AppStore: ObservableObject {
         var savedAt: String
         var accounts: [Account]
         var videos: [String: [VideoItem]]
+        #if MUTABAA
+        var spaces: [AccountSpace]? = nil
+        var activeSpaceID: String? = nil
+        #endif
     }
 
     private var directCacheURL: URL? {
@@ -736,11 +928,21 @@ final class AppStore: ObservableObject {
 
     private func saveDirectAccounts() {
         guard !isDemo, !useServer, let directCacheURL else { return }
+        #if MUTABAA
+        let payload = DirectCacheFile(
+            savedAt: ISO8601DateFormatter.nabd.string(from: Date()),
+            accounts: accounts,
+            videos: directVideos,
+            spaces: spaces,
+            activeSpaceID: activeSpaceID
+        )
+        #else
         let payload = DirectCacheFile(
             savedAt: ISO8601DateFormatter.nabd.string(from: Date()),
             accounts: accounts,
             videos: directVideos
         )
+        #endif
         do {
             let data = try JSONEncoder().encode(payload)
             try data.write(to: directCacheURL, options: .atomic)
@@ -752,11 +954,45 @@ final class AppStore: ObservableObject {
     private func loadDirectAccounts() {
         guard let directCacheURL, let data = try? Data(contentsOf: directCacheURL),
               let payload = try? JSONDecoder().decode(DirectCacheFile.self, from: data) else {
+            #if MUTABAA
+            seedSpacesIfNeeded(with: [])
+            #endif
             accounts = []
             summary = .empty
             source = .empty
+            lastRefreshed = nil
+            #if MUTABAA
+            saveDirectAccounts()
+            #endif
             return
         }
+
+        #if MUTABAA
+        if let saved = payload.spaces, !saved.isEmpty {
+            spaces = saved.map { space in
+                var copy = space
+                copy.accounts = restoredAccounts(space.accounts)
+                return copy
+            }
+            if let active = payload.activeSpaceID,
+               spaces.contains(where: { $0.id == active }) {
+                activeSpaceID = active
+            } else {
+                activeSpaceID = spaces.first?.id ?? ""
+            }
+            isSwitchingSpace = true
+            accounts = activeSpace?.accounts ?? []
+            isSwitchingSpace = false
+        } else {
+            // ترحيل نسخة قديمة: كل الحسابات الحالية تنتقل إلى مساحة «علي».
+            let migrated = restoredAccounts(payload.accounts)
+            spaces = []
+            seedSpacesIfNeeded(with: migrated)
+            isSwitchingSpace = true
+            accounts = migrated
+            isSwitchingSpace = false
+        }
+        #else
         accounts = payload.accounts.map { account in
             var stable = account
             if stable.status == "error" {
@@ -765,11 +1001,16 @@ final class AppStore: ObservableObject {
             stable.error = nil
             return stable
         }
+        #endif
+
         directVideos = payload.videos
         summary = Summary.make(from: accounts)
         source = accounts.isEmpty ? .empty : .direct
         errorMessage = nil
         lastRefreshed = Dates.parse(payload.savedAt)
+        #if MUTABAA
+        saveDirectAccounts()
+        #endif
     }
 
     func clearCache() {

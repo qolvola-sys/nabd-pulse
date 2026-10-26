@@ -81,9 +81,23 @@ struct AddAccountsView: View {
                 Text("إضافة حسابات")
                     .font(.system(size: 22, weight: .heavy, design: .rounded))
                     .foregroundColor(Theme.text)
+                #if MUTABAA
+                if store.spacesEnabled {
+                    Text("الصق روابط TikTok — ستُضاف إلى مساحة «\(store.activeSpaceName)»")
+                        .font(.system(size: 11.5))
+                        .foregroundColor(Theme.textSecondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                } else {
+                    Text("الصق روابط TikTok — رابط في كل سطر")
+                        .font(.system(size: 11.5))
+                        .foregroundColor(Theme.textSecondary)
+                }
+                #else
                 Text("الصق روابط TikTok — رابط في كل سطر")
                     .font(.system(size: 11.5))
                     .foregroundColor(Theme.textSecondary)
+                #endif
             }
             Spacer()
             Button {

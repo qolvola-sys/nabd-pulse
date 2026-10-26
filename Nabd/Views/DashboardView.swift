@@ -151,9 +151,32 @@ struct DashboardView: View {
                         .font(.system(size: 10.5, weight: .medium))
                         .foregroundColor(Theme.textTertiary)
                 }
+                #if MUTABAA
+                if store.spacesEnabled {
+                    HStack(spacing: 5) {
+                        Image(systemName: "square.stack.3d.up.fill")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundColor(Theme.cyan)
+                        Text(store.activeSpaceName)
+                            .font(.system(size: 11.5, weight: .semibold))
+                            .foregroundColor(Theme.textSecondary)
+                            .lineLimit(1)
+                        Text("·")
+                            .foregroundColor(Theme.textTertiary)
+                        Text(Dates.todayArabic())
+                            .font(.system(size: 11.5))
+                            .foregroundColor(Theme.textTertiary)
+                    }
+                } else {
+                    Text(Dates.todayArabic())
+                        .font(.system(size: 12))
+                        .foregroundColor(Theme.textSecondary)
+                }
+                #else
                 Text(Dates.todayArabic())
                     .font(.system(size: 12))
                     .foregroundColor(Theme.textSecondary)
+                #endif
             }
 
             Spacer()

@@ -9,12 +9,18 @@ struct SettingsView: View {
     @State private var isTesting = false
     @State private var report: ConnectionReport?
     @State private var shareFile: ShareFile?
+    @State private var showSpaces = false
     @State private var didLoad = false
 
     var body: some View {
         ScrollView(showsIndicators: false) {
             VStack(spacing: 16) {
                 header
+                #if MUTABAA
+                if store.spacesEnabled {
+                    spacesCard
+                }
+                #endif
                 sourceCard
                 if store.useServer {
                     connectionCard
@@ -38,6 +44,14 @@ struct SettingsView: View {
         .sheet(item: $shareFile) { file in
             ActivityView(items: [file.url])
         }
+        .sheet(isPresented: $showSpaces) {
+            #if MUTABAA
+            SpacesManagerView()
+                .environmentObject(store)
+            #else
+            EmptyView()
+            #endif
+        }
     }
 
     // MARK: - الرأس
@@ -53,6 +67,71 @@ struct SettingsView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
+
+    #if MUTABAA
+    // MARK: - المساحات
+
+    private var spacesCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Label("المساحات", systemImage: "rectangle.3.group.fill")
+                    .font(.system(size: 12.5, weight: .bold))
+                    .foregroundColor(Theme.text)
+                Spacer()
+                Chip(text: "\(store.spaces.count) مساحة", color: Theme.cyan)
+            }
+
+            Button {
+                showSpaces = true
+                store.haptic(.selection)
+            } label: {
+                HStack(spacing: 11) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(Theme.cyan.opacity(0.13))
+                        Text(String(store.activeSpaceName.prefix(1)))
+                            .font(.system(size: 16, weight: .bold, design: .rounded))
+                            .foregroundColor(Theme.cyan)
+                    }
+                    .frame(width: 40, height: 40)
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("المساحة النشطة")
+                            .font(.system(size: 10))
+                            .foregroundColor(Theme.textTertiary)
+                        Text(store.activeSpaceName)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(Theme.text)
+                            .lineLimit(1)
+                        Text("\(Num.full(Int64(store.accounts.count))) حساب")
+                            .font(.system(size: 10))
+                            .foregroundColor(Theme.textSecondary)
+                    }
+
+                    Spacer(minLength: 6)
+
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(Theme.textTertiary)
+                }
+                .padding(11)
+                .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Theme.bgSoft))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .strokeBorder(Theme.borderSoft, lineWidth: 1)
+                )
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(PressableStyle(scale: 0.99))
+
+            Text("أضف مساحات، أعد تسميتها، أو رتّبها. لكل مساحة حساباتها وإحصاءاتها وترتيبها المستقل.")
+                .font(.system(size: 10))
+                .foregroundColor(Theme.textTertiary)
+                .lineSpacing(3)
+        }
+        .card(padding: 16)
+    }
+    #endif
 
     // MARK: - مصدر البيانات
 
@@ -434,7 +513,7 @@ struct SettingsView: View {
                         .font(.system(size: 15, weight: .bold, design: .rounded))
                         .foregroundColor(Theme.text)
                     Text(AppVariant.readsEveryWeeklyPost
-                         ? "تحليلات TikTok لعدة حسابات · 1.0.0"
+                         ? "تحليلات TikTok لعدة حسابات · 1.1.0"
                          : "تحليلات TikTok لعدة حسابات · 1.2.0")
                         .font(.system(size: 10.5))
                         .foregroundColor(Theme.textTertiary)
@@ -452,15 +531,29 @@ struct SettingsView: View {
                 .foregroundColor(Theme.textTertiary)
                 .lineSpacing(4)
 
+            #if MUTABAA
+            Text("الشريط العلوي يجمع مساحات مستقلة. لكل مساحة اسم وحسابات وترتيب يدوي خاص بها، وتُعرض الحسابات في مجموعات من ٣ مع فاصل أحمر وخلفية مختلفة لكل مجموعة.")
+                .font(.system(size: 10.5))
+                .foregroundColor(Theme.textTertiary)
+                .lineSpacing(4)
+            #endif
+
             Text("المتابعون، المتابَعون، إجمالي الإعجابات وعدد المنشورات تُقرأ من statsV2 بدقة 100% عند توفره. مشاهدات الفيديو العامة يقرّبها TikTok للأرقام الكبيرة، لذلك تظهر بعلامة ≈ بدل تقديمها كرقم دقيق.")
                 .font(.system(size: 9.5))
                 .foregroundColor(Theme.textTertiary.opacity(0.85))
                 .lineSpacing(3)
 
+            #if MUTABAA
+            Text("التقييم الأسبوعي من 100 يعتمد مباشرة على مجموع مشاهدات كل منشورات آخر ٧ أيام: كل ١٠٬٠٠٠ مشاهدة = نقطة، و١٬٠٠٠٬٠٠٠ مشاهدة = 100%. تقرأ «المتابعة» صفحة الحساب كاملة لتشمل كل منشورات الفترة، بدون خادم أو تسجيل دخول. وإذا تعذّرت قراءة بعض المشاهدات تظهر بعلامة ≈ بدل تقديمها كرقم دقيق.")
+                .font(.system(size: 9.5))
+                .foregroundColor(Theme.textTertiary.opacity(0.85))
+                .lineSpacing(3)
+            #else
             Text("التقييم الأسبوعي من 100 يعتمد مباشرة على مشاهدات منشورات آخر ٧ أيام: كل ١٠٬٠٠٠ مشاهدة = نقطة، و١٬٠٠٠٬٠٠٠ مشاهدة = 100%. الحساب الذي ينشر أكثر من ١٠ منشورات في الفترة يُحسب من أحدث ١٠، وتحتاج الدقة الكاملة لمشاهدات كل المنشورات إلى TikTok Display API الرسمي.")
                 .font(.system(size: 9.5))
                 .foregroundColor(Theme.textTertiary.opacity(0.85))
                 .lineSpacing(3)
+            #endif
 
             Link(destination: URL(string: "https://developers.tiktok.com/")!) {
                 HStack(spacing: 5) {

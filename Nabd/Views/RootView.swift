@@ -90,6 +90,7 @@ struct RootView: View {
                     .ignoresSafeArea(edges: .bottom)
                 )
         }
+        .spacesTopInset(spacesTopInsetEnabled)
         .environment(\.layoutDirection, .rightToLeft)
         .preferredColorScheme(.dark)
         .tint(Theme.cyan)
@@ -99,9 +100,36 @@ struct RootView: View {
         }
     }
 
+    private var spacesTopInsetEnabled: Bool {
+        #if MUTABAA
+        return store.spacesEnabled
+        #else
+        return false
+        #endif
+    }
+
     private func switchTab(_ target: AppTab) {
         withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { tab = target }
         store.haptic(.selection)
+    }
+}
+
+private extension View {
+    /// في «نبض» يعيد هذا المعدّل العرض كما هو تمامًا. في «المتابعة»
+    /// يضيف شريط المساحات فقط عندما تكون المساحات فعّالة.
+    @ViewBuilder
+    func spacesTopInset(_ enabled: Bool) -> some View {
+        #if MUTABAA
+        if enabled {
+            safeAreaInset(edge: .top, spacing: 0) {
+                SpacesBar()
+            }
+        } else {
+            self
+        }
+        #else
+        self
+        #endif
     }
 }
 

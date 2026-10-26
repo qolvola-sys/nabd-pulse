@@ -2,12 +2,18 @@ import SwiftUI
 import UIKit
 
 enum AccountSort: String, CaseIterable, Identifiable {
+    #if MUTABAA
+    case manual
+    #endif
     case weekly, views24h, posts24h, views, posts, followers, name, recent
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
+        #if MUTABAA
+        case .manual: return "ترتيب يدوي"
+        #endif
         case .weekly: return "تقييم الأسبوع"
         case .views24h: return "الأكثر مشاهدة ٢٤س"
         case .posts24h: return "الأكثر نشراً ٢٤س"
@@ -24,10 +30,17 @@ struct AccountsView: View {
     @EnvironmentObject private var store: AppStore
 
     @State private var search = ""
-    @State private var sort: AccountSort = .weekly
+    @State private var sort: AccountSort = {
+        #if MUTABAA
+        return .manual
+        #else
+        return .weekly
+        #endif
+    }()
     @State private var selected: Account?
     @State private var showAdd = false
     @State private var pendingDelete: Account?
+    @State private var movingAccount: Account?
 
     private var filtered: [Account] {
         let query = search.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -39,6 +52,11 @@ struct AccountsView: View {
             }
         }
         switch sort {
+        #if MUTABAA
+        case .manual:
+            // نحافظ على ترتيب المساحة كما حفظه المستخدم.
+            break
+        #endif
         case .weekly: list.sort { $0.weeklyViews > $1.weeklyViews }
         case .views24h: list.sort { $0.views24h > $1.views24h }
         case .posts24h: list.sort { $0.posts24h > $1.posts24h }
@@ -64,39 +82,15 @@ struct AccountsView: View {
                 } else if filtered.isEmpty {
                     emptyState
                 } else {
+                    #if MUTABAA
+                    groupedAccountsList
+                    #else
                     LazyVStack(spacing: 10) {
                         ForEach(filtered) { account in
-                            AccountRow(account: account, maxViews: maxViews)
-                                .contentShape(Rectangle())
-                                .onTapGesture {
-                                    store.haptic(.impact)
-                                    selected = account
-                                }
-                                .contextMenu {
-                                    Button {
-                                        Task { await store.sync(account) }
-                                    } label: {
-                                        Label("مزامنة الآن", systemImage: "arrow.triangle.2.circlepath")
-                                    }
-                                    Button {
-                                        copyLink(account)
-                                    } label: {
-                                        Label("نسخ الرابط", systemImage: "link")
-                                    }
-                                    Button {
-                                        openInTikTok(account)
-                                    } label: {
-                                        Label("فتح في TikTok", systemImage: "arrow.up.right.square")
-                                    }
-                                    Divider()
-                                    Button(role: .destructive) {
-                                        pendingDelete = account
-                                    } label: {
-                                        Label("إزالة الحساب", systemImage: "trash")
-                                    }
-                                }
+                            accountCard(account)
                         }
                     }
+                    #endif
                 }
             }
             .padding(.horizontal, 18)
@@ -125,6 +119,14 @@ struct AccountsView: View {
             AccountDetailView(account: account)
                 .environmentObject(store)
         }
+        .sheet(item: $movingAccount) { account in
+            #if MUTABAA
+            MoveAccountSheet(account: account)
+                .environmentObject(store)
+            #else
+            EmptyView()
+            #endif
+        }
         .confirmationDialog(
             "إزالة @\(pendingDelete?.handle ?? "")؟",
             isPresented: Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }),
@@ -145,6 +147,258 @@ struct AccountsView: View {
     private var maxViews: Int64 {
         max(store.accounts.map { $0.views24h }.max() ?? 1, 1)
     }
+
+    private func accountCard(_ account: Account) -> some View {
+        AccountRow(account: account, maxViews: maxViews)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                store.haptic(.impact)
+                selected = account
+            }
+            .contextMenu {
+                #if MUTABAA
+                if canReorder {
+                    Button {
+                        movingAccount = account
+                        store.haptic(.selection)
+                    } label: {
+                        Label("نقل إلى موضع…", systemImage: "arrow.up.arrow.down")
+                    }
+                    Button {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                            store.moveAccount(account.id, by: -1)
+                        }
+                    } label: {
+                        Label("تحريك لأعلى", systemImage: "chevron.up")
+                    }
+                    Button {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                            store.moveAccount(account.id, by: 1)
+                        }
+                    } label: {
+                        Label("تحريك لأسفل", systemImage: "chevron.down")
+                    }
+                    Divider()
+                }
+                #endif
+
+                Button {
+                    Task { await store.sync(account) }
+                } label: {
+                    Label("مزامنة الآن", systemImage: "arrow.triangle.2.circlepath")
+                }
+                Button {
+                    copyLink(account)
+                } label: {
+                    Label("نسخ الرابط", systemImage: "link")
+                }
+                Button {
+                    openInTikTok(account)
+                } label: {
+                    Label("فتح في TikTok", systemImage: "arrow.up.right.square")
+                }
+                Divider()
+                Button(role: .destructive) {
+                    pendingDelete = account
+                } label: {
+                    Label("إزالة الحساب", systemImage: "trash")
+                }
+            }
+    }
+
+    #if MUTABAA
+    private struct AccountGroup: Identifiable {
+        let id: Int
+        let accounts: [Account]
+    }
+
+    private var accountGroups: [AccountGroup] {
+        guard !filtered.isEmpty else { return [] }
+        return stride(from: 0, to: filtered.count, by: 3).map { start in
+            AccountGroup(
+                id: start / 3,
+                accounts: Array(filtered[start..<min(start + 3, filtered.count)])
+            )
+        }
+    }
+
+    private var canReorder: Bool {
+        store.isDirect &&
+        sort == .manual &&
+        search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var groupedAccountsList: some View {
+        LazyVStack(spacing: 0) {
+            ForEach(accountGroups) { group in
+                groupSection(group)
+                if group.id < accountGroups.count - 1 {
+                    groupSeparator
+                }
+            }
+        }
+    }
+
+    private func groupSection(_ group: AccountGroup) -> some View {
+        let accent = Theme.chartPalette[group.id % Theme.chartPalette.count]
+        return VStack(spacing: 10) {
+            HStack(spacing: 7) {
+                Circle()
+                    .fill(accent)
+                    .frame(width: 7, height: 7)
+                    .shadow(color: accent.opacity(0.7), radius: 4)
+                Text("المجموعة \(Num.full(Int64(group.id + 1)))")
+                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                    .foregroundColor(accent)
+                Text("·")
+                    .font(.system(size: 10))
+                    .foregroundColor(Theme.textTertiary)
+                Text("\(Num.full(Int64(group.accounts.count))) من الحسابات")
+                    .font(.system(size: 9.5))
+                    .foregroundColor(Theme.textTertiary)
+                Spacer(minLength: 0)
+                if canReorder {
+                    HStack(spacing: 4) {
+                        Image(systemName: "line.3.horizontal")
+                            .font(.system(size: 9, weight: .bold))
+                        Text("رتّب بالأسهم أو انقل إلى موضع")
+                            .font(.system(size: 8.5))
+                    }
+                    .foregroundColor(Theme.textTertiary)
+                }
+            }
+            .padding(.horizontal, 4)
+
+            ForEach(group.accounts) { account in
+                VStack(spacing: 8) {
+                    accountCard(account)
+                    if canReorder {
+                        reorderBar(account)
+                    }
+                }
+            }
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 26, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            accent.opacity(0.14),
+                            Theme.surface.opacity(0.50),
+                            accent.opacity(0.04),
+                        ],
+                        startPoint: .topTrailing,
+                        endPoint: .bottomLeading
+                    )
+                )
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 26, style: .continuous)
+                .strokeBorder(accent.opacity(0.24), lineWidth: 1)
+        )
+    }
+
+    private var groupSeparator: some View {
+        HStack(spacing: 10) {
+            Rectangle()
+                .fill(
+                    LinearGradient(
+                        colors: [.clear, Theme.red.opacity(0.9)],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                )
+                .frame(height: 2)
+
+            HStack(spacing: 5) {
+                Image(systemName: "square.split.2x1.fill")
+                    .font(.system(size: 8, weight: .bold))
+                Text("فاصل المجموعات")
+                    .font(.system(size: 9.5, weight: .bold))
+            }
+            .foregroundColor(Theme.red)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
+            .background(Capsule().fill(Theme.red.opacity(0.10)))
+            .overlay(Capsule().strokeBorder(Theme.red.opacity(0.28), lineWidth: 1))
+
+            Rectangle()
+                .fill(
+                    LinearGradient(
+                        colors: [Theme.red.opacity(0.9), .clear],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                )
+                .frame(height: 2)
+        }
+        .padding(.vertical, 14)
+    }
+
+    private func reorderBar(_ account: Account) -> some View {
+        let index = store.accounts.firstIndex(where: { $0.id == account.id }) ?? 0
+        let count = store.accounts.count
+
+        return HStack(spacing: 8) {
+            Text("الموضع \(Num.full(Int64(index + 1))) من \(Num.full(Int64(count)))")
+                .font(.system(size: 9.5, weight: .medium, design: .rounded))
+                .foregroundColor(Theme.textTertiary)
+
+            Spacer(minLength: 4)
+
+            Button {
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                    store.moveAccount(account.id, by: -1)
+                }
+            } label: {
+                Image(systemName: "chevron.up")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(index > 0 ? Theme.cyan : Theme.textTertiary.opacity(0.35))
+                    .frame(width: 30, height: 28)
+                    .background(RoundedRectangle(cornerRadius: 9).fill(Theme.surface.opacity(0.82)))
+            }
+            .buttonStyle(.plain)
+            .disabled(index == 0)
+
+            Button {
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                    store.moveAccount(account.id, by: 1)
+                }
+            } label: {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(index < count - 1 ? Theme.cyan : Theme.textTertiary.opacity(0.35))
+                    .frame(width: 30, height: 28)
+                    .background(RoundedRectangle(cornerRadius: 9).fill(Theme.surface.opacity(0.82)))
+            }
+            .buttonStyle(.plain)
+            .disabled(index >= count - 1)
+
+            Button {
+                movingAccount = account
+                store.haptic(.selection)
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.up.arrow.down")
+                        .font(.system(size: 9, weight: .bold))
+                    Text("نقل إلى موضع")
+                        .font(.system(size: 9.5, weight: .semibold))
+                }
+                .foregroundColor(Theme.cyan)
+                .padding(.horizontal, 9)
+                .frame(height: 28)
+                .background(RoundedRectangle(cornerRadius: 9).fill(Theme.cyan.opacity(0.10)))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 9)
+                        .strokeBorder(Theme.cyan.opacity(0.18), lineWidth: 1)
+                )
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 2)
+    }
+    #endif
 
     private var posts24hText: String {
         store.summary.dailyComplete
@@ -177,9 +431,22 @@ struct AccountsView: View {
                 Text("الحسابات")
                     .font(.system(size: 26, weight: .heavy, design: .rounded))
                     .foregroundColor(Theme.text)
+                #if MUTABAA
+                if store.spacesEnabled {
+                    Text("\(store.accounts.count) حساباً في مساحة «\(store.activeSpaceName)»")
+                        .font(.system(size: 11.5))
+                        .foregroundColor(Theme.textSecondary)
+                        .lineLimit(1)
+                } else {
+                    Text("\(store.accounts.count) حساباً في \(AppVariant.name)")
+                        .font(.system(size: 11.5))
+                        .foregroundColor(Theme.textSecondary)
+                }
+                #else
                 Text("\(store.accounts.count) حساباً في \(AppVariant.name)")
                     .font(.system(size: 11.5))
                     .foregroundColor(Theme.textSecondary)
+                #endif
             }
             Spacer()
             Button {
@@ -275,6 +542,17 @@ struct AccountsView: View {
         }
     }
 
+    private var emptyMessage: String {
+        #if MUTABAA
+        if store.spacesEnabled {
+            return "الصق روابط حسابات TikTok (حتى ٥٠٠ رابط دفعة واحدة) وستُضاف إلى مساحة «\(store.activeSpaceName)» مع إحصاءاتها."
+        }
+        return "الصق روابط حسابات TikTok (حتى ٥٠٠ رابط دفعة واحدة) وسنرتّب لك المنشورات والمشاهدات."
+        #else
+        return "الصق روابط حسابات TikTok (حتى ١٠٠ رابط دفعة واحدة) وسنرتّب لك المنشورات والمشاهدات."
+        #endif
+    }
+
     private var emptyState: some View {
         VStack(spacing: 6) {
             if !search.isEmpty {
@@ -289,7 +567,7 @@ struct AccountsView: View {
                 EmptyStateView(
                     icon: "person.badge.plus",
                     title: "ابدأ بإضافة حساباتك",
-                    message: "الصق روابط حسابات TikTok (حتى ١٠٠ رابط دفعة واحدة) وسنرتّب لك المنشورات والمشاهدات.",
+                    message: emptyMessage,
                     actionTitle: "إضافة روابط",
                     action: { showAdd = true }
                 )
