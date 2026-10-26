@@ -82,13 +82,15 @@ final class LongPressTests: XCTestCase {
         }
 
         groupTwo.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-        sleep(1)
-        attach("after-move")
 
+        // رسالة التأكيد تختفي تلقائياً بعد 2.6 ثانية، لذا نتحقق منها فوراً
+        // قبل التقاط اللقطة أو تمرير القائمة.
         let toast = app.staticTexts
             .matching(NSPredicate(format: "label CONTAINS %@", "إلى المجموعة 2"))
             .firstMatch
-        XCTAssertTrue(toast.waitForExistence(timeout: 5), "Move confirmation toast was not shown")
+        let toastShown = toast.waitForExistence(timeout: 3)
+        attach("after-move")
+        XCTAssertTrue(toastShown, "Move confirmation toast was not shown")
 
         for _ in 0..<3 {
             app.swipeUp()
