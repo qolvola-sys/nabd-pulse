@@ -407,15 +407,16 @@ final class AppStore: ObservableObject {
             spaces[spaceIndex].groups = [AccountGroup(name: "المجموعة 1")]
         }
 
-        if let last = spaces[spaceIndex].groups.last {
-            // نعدّ الأعضاء الفعليين فقط؛ الحساب الجديد لم تُسند له مجموعة بعد.
-            let lastCount = accounts.reduce(0) { partial, account in
-                partial + (spaces[spaceIndex].groupMembership[account.id] == last.id ? 1 : 0)
+        // نعدّ الأعضاء الفعليين فقط؛ الحساب الجديد لم تُسند له مجموعة بعد.
+        let available = spaces[spaceIndex].groups.last { group in
+            let count = accounts.reduce(0) { partial, account in
+                partial + (spaces[spaceIndex].groupMembership[account.id] == group.id ? 1 : 0)
             }
-            if lastCount < AccountGroup.capacity {
-                spaces[spaceIndex].groupMembership[accountID] = last.id
-                return
-            }
+            return count < AccountGroup.capacity
+        }
+        if let available {
+            spaces[spaceIndex].groupMembership[accountID] = available.id
+            return
         }
 
         let group = AccountGroup(name: spaces[spaceIndex].suggestedGroupName)
