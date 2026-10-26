@@ -120,7 +120,7 @@ final class GroupsTests: XCTestCase {
         }
 
         menuItem.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-        guard app.staticTexts["نقل إلى مجموعة"].waitForExistence(timeout: 8) else {
+        guard app.staticTexts["move-sheet-title"].waitForExistence(timeout: 8) else {
             dumpButtons(app, "move-sheet")
             attach("move-sheet-not-found")
             XCTFail("Move sheet was not presented")
@@ -158,7 +158,7 @@ final class GroupsTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["ممتلئة"].exists, "Full group should be labelled as full")
         attach("03-full-group")
         app.buttons["move-sheet-close"].tap()
-        XCTAssertTrue(app.staticTexts["نقل إلى مجموعة"].waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["move-sheet-title"].waitForNonExistence(timeout: 5))
 
         // ٣) إعادة تسمية المجموعة الثانية من قائمة الحسابات.
         scrollToTop(app)
@@ -244,7 +244,7 @@ final class GroupsTests: XCTestCase {
         )
         attach("08-fine-tuning")
         app.buttons["move-sheet-close"].tap()
-        XCTAssertTrue(app.staticTexts["نقل إلى مجموعة"].waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["move-sheet-title"].waitForNonExistence(timeout: 5))
 
         // ٧) إنشاء مجموعة من شاشة النقل تنقل الحساب وتغلق الشاشة.
         scrollToTop(app)
@@ -260,7 +260,7 @@ final class GroupsTests: XCTestCase {
             .firstMatch
         XCTAssertTrue(createToast.waitForExistence(timeout: 5), "Create and move confirmation was not shown")
         XCTAssertTrue(
-            app.staticTexts["نقل إلى مجموعة"].waitForNonExistence(timeout: 6),
+            app.staticTexts["move-sheet-title"].waitForNonExistence(timeout: 6),
             "Move sheet should close after creating a group and moving the account"
         )
         attach("09-created-and-moved")

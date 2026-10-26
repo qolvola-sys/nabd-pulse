@@ -61,6 +61,7 @@ struct MoveAccountSheet: View {
                 Text("نقل إلى مجموعة")
                     .font(.system(size: 18, weight: .heavy, design: .rounded))
                     .foregroundColor(Theme.text)
+                    .accessibilityIdentifier("move-sheet-title")
                 Text(headerSubtitle)
                     .font(.system(size: 10.5))
                     .foregroundColor(Theme.textSecondary)
