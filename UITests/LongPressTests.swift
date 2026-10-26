@@ -86,7 +86,7 @@ final class LongPressTests: XCTestCase {
         attach("after-move")
 
         let toast = app.staticTexts
-            .matching(NSPredicate(format: "label CONTAINS %@", "إلى المجموعة ٢"))
+            .matching(NSPredicate(format: "label CONTAINS %@", "إلى المجموعة 2"))
             .firstMatch
         XCTAssertTrue(toast.waitForExistence(timeout: 5), "Move confirmation toast was not shown")
 
@@ -95,7 +95,7 @@ final class LongPressTests: XCTestCase {
         }
         sleep(1)
         let position = app.staticTexts
-            .matching(NSPredicate(format: "label CONTAINS %@", "الموضع ٤ من ٤"))
+            .matching(NSPredicate(format: "label CONTAINS %@", "الموضع 4 من 4"))
             .firstMatch
         XCTAssertTrue(position.waitForExistence(timeout: 8), "Account position did not update to group 2")
         attach("group-two-position")
