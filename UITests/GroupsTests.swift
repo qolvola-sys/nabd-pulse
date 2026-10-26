@@ -42,42 +42,18 @@ final class GroupsTests: XCTestCase {
         }
     }
 
-    private func waitForCleanedText(
-        _ expected: String,
-        in app: XCUIApplication,
-        timeout: TimeInterval = 5
+    /// ينتظر عنصرًا محددًا ويقارن نصه بعد إزالة علامات الاتجاه.
+    private func waitForCleanedLabel(
+        _ element: XCUIElement,
+        equals expected: String,
+        timeout: TimeInterval = 6
     ) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         repeat {
-            let found = app.staticTexts.allElementsBoundByIndex.contains {
-                clean($0.label) == expected
-            }
-            if found { return true }
-            Thread.sleep(forTimeInterval: 0.25)
+            if element.exists && clean(element.label) == expected { return true }
+            Thread.sleep(forTimeInterval: 0.2)
         } while Date() < deadline
         return false
-    }
-
-    /// يعيد نص العنصر المطابق بعد إزالة علامات الاتجاه، أو nil.
-    private func scrollUntilCleanedText(
-        containing fragment: String,
-        in app: XCUIApplication,
-        maxSwipes: Int = 18
-    ) -> String? {
-        for _ in 0..<maxSwipes {
-            let matches = app.staticTexts.allElementsBoundByIndex.filter {
-                clean($0.label).contains(fragment)
-            }
-            if let hittable = matches.first(where: { $0.isHittable }) {
-                return clean(hittable.label)
-            }
-            app.swipeUp(velocity: .fast)
-            Thread.sleep(forTimeInterval: 0.35)
-        }
-        let matches = app.staticTexts.allElementsBoundByIndex.filter {
-            clean($0.label).contains(fragment)
-        }
-        return matches.first.map { clean($0.label) }
     }
 
     private func replaceText(in field: XCUIElement, with text: String) {
@@ -100,11 +76,12 @@ final class GroupsTests: XCTestCase {
         print("BUTTONS_\(tag)_END")
     }
 
-    private func openMoveSheet(for displayName: String, app: XCUIApplication) -> Bool {
-        let row = app.staticTexts[displayName]
+    /// يفتح شاشة النقل بالضغط المطوّل على مقبض الحساب (مثل @user08).
+    private func openMoveSheet(forHandle handle: String, app: XCUIApplication) -> Bool {
+        let row = app.staticTexts["@\(handle)"]
         guard scrollUntilHittable(row, in: app) else {
-            attach("row-not-found-\(displayName)")
-            XCTFail("Account row \(displayName) was not found")
+            attach("row-not-found-\(handle)")
+            XCTFail("Account row @\(handle) was not found")
             return false
         }
 
@@ -131,7 +108,8 @@ final class GroupsTests: XCTestCase {
 
     func testGroupsCapacityRenameCreateAndMove() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--screen=accounts"]
+        // --no-refresh يمنع تحديث TikTok التلقائي كي تبقى بيانات الترحيل ثابتة.
+        app.launchArguments = ["--screen=accounts", "--no-refresh"]
         app.launch()
 
         // ١) ترحيل البيانات القديمة: ١٠ حسابات إلى مجموعتين ٧ + ٣.
@@ -145,13 +123,13 @@ final class GroupsTests: XCTestCase {
             "Migrated group 2 was not shown"
         )
         XCTAssertTrue(
-            waitForCleanedText("3 من 7", in: app),
+            waitForCleanedLabel(app.staticTexts["group-count-1"], equals: "3 من 7"),
             "Group 2 should contain 3 of 7 accounts"
         )
         attach("02-migrated-group-2")
 
         // ٢) السعة: الحساب الثامن يجب ألا يستطيع الانتقال إلى مجموعة ممتلئة.
-        XCTAssertTrue(openMoveSheet(for: "حساب 08", app: app))
+        XCTAssertTrue(openMoveSheet(forHandle: "user08", app: app))
         let fullGroup = app.buttons["move-group-1"]
         XCTAssertTrue(fullGroup.waitForExistence(timeout: 5), "Full group card was not found")
         XCTAssertFalse(fullGroup.isEnabled, "A full group must not accept an 8th account")
@@ -190,14 +168,14 @@ final class GroupsTests: XCTestCase {
             "New empty group was not shown"
         )
         XCTAssertTrue(
-            waitForCleanedText("0 من 7", in: app),
+            waitForCleanedLabel(app.staticTexts["group-count-2"], equals: "0 من 7"),
             "New group should start empty"
         )
         attach("05-created-empty-group")
 
         // ٥) نقل الحساب الأول إلى أول موضع في المجموعة الثانية.
         scrollToTop(app)
-        XCTAssertTrue(openMoveSheet(for: "حساب 01", app: app))
+        XCTAssertTrue(openMoveSheet(forHandle: "user01", app: app))
         let moveGroupTwo = app.buttons["move-group-2"]
         XCTAssertTrue(moveGroupTwo.waitForExistence(timeout: 5), "Group 2 card was not found")
         XCTAssertTrue(moveGroupTwo.isEnabled, "Group 2 should accept another account")
@@ -209,29 +187,27 @@ final class GroupsTests: XCTestCase {
         XCTAssertTrue(moveToast.waitForExistence(timeout: 4), "Move confirmation toast was not shown")
         attach("06-moved-to-group-2")
 
-        guard let positionText = scrollUntilCleanedText(
-            containing: "الموضع 1 من 4",
-            in: app,
-            maxSwipes: 24
-        ) else {
-            attach("position-not-found")
-            XCTFail("Moved account should be first in group 2")
-            return
-        }
+        let position = app.staticTexts["position-user01"]
         XCTAssertTrue(
-            positionText.contains("مفضلة"),
-            "Position bar should name the group, got: \(positionText)"
+            scrollUntilHittable(position, in: app, maxSwipes: 24),
+            "Moved account position bar was not found"
+        )
+        let positionText = clean(position.label)
+        XCTAssertTrue(
+            positionText.contains("مفضلة") && positionText.contains("1 من 4"),
+            "Moved account should be first in group 2, got: \(positionText)"
         )
         attach("07-first-position")
 
         // ٦) الضبط الدقيق داخل المجموعة الحالية.
-        XCTAssertTrue(openMoveSheet(for: "حساب 10", app: app))
+        XCTAssertTrue(openMoveSheet(forHandle: "user10", app: app))
+        let finePosition = app.staticTexts["fine-position"]
         let fineTop = app.buttons["fine-top"]
         XCTAssertTrue(fineTop.waitForExistence(timeout: 5), "Fine tuning controls were not found")
         XCTAssertTrue(fineTop.isEnabled, "Moving to top should be enabled for the last account")
         fineTop.tap()
         XCTAssertTrue(
-            waitForCleanedText("الموضع 1 من 4", in: app, timeout: 4),
+            waitForCleanedLabel(finePosition, equals: "الموضع 1 من 4", timeout: 4),
             "Moving to group top did not update the position"
         )
 
@@ -239,7 +215,7 @@ final class GroupsTests: XCTestCase {
         XCTAssertTrue(fineDown.isEnabled, "Moving one step down should be enabled")
         fineDown.tap()
         XCTAssertTrue(
-            waitForCleanedText("الموضع 2 من 4", in: app, timeout: 4),
+            waitForCleanedLabel(finePosition, equals: "الموضع 2 من 4", timeout: 4),
             "One-step move did not update the position"
         )
         attach("08-fine-tuning")
@@ -248,7 +224,7 @@ final class GroupsTests: XCTestCase {
 
         // ٧) إنشاء مجموعة من شاشة النقل تنقل الحساب وتغلق الشاشة.
         scrollToTop(app)
-        XCTAssertTrue(openMoveSheet(for: "حساب 01", app: app))
+        XCTAssertTrue(openMoveSheet(forHandle: "user01", app: app))
         let createInSheet = app.buttons["create-group-sheet"]
         XCTAssertTrue(createInSheet.waitForExistence(timeout: 5), "Create group in move sheet was not found")
         createInSheet.tap()
@@ -271,7 +247,7 @@ final class GroupsTests: XCTestCase {
             "New group was not shown after creating it from the move sheet"
         )
         XCTAssertTrue(
-            waitForCleanedText("1 من 7", in: app),
+            waitForCleanedLabel(app.staticTexts["group-count-3"], equals: "1 من 7"),
             "New group should contain the moved account"
         )
         attach("10-final-groups")

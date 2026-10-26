@@ -298,6 +298,7 @@ struct MoveAccountSheet: View {
                 Text("الموضع \(Num.full(Int64(index + 1))) من \(Num.full(Int64(total)))")
                     .font(.system(size: 9.5, weight: .medium, design: .rounded))
                     .lineLimit(1)
+                    .accessibilityIdentifier("fine-position")
             }
             .foregroundColor(Theme.textTertiary)
 

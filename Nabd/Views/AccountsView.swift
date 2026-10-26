@@ -407,6 +407,7 @@ struct AccountsView: View {
                     .font(.system(size: 9.5))
                     .foregroundColor(Theme.textTertiary)
                     .lineLimit(1)
+                    .accessibilityIdentifier("group-count-\(group.index)")
                 Spacer(minLength: 4)
 
                 if group.isManaged && canReorder {
@@ -560,6 +561,7 @@ struct AccountsView: View {
                 .foregroundColor(Theme.textTertiary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.65)
+                .accessibilityIdentifier("position-\(account.handle)")
 
             Spacer(minLength: 4)
 

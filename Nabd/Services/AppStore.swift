@@ -470,12 +470,19 @@ final class AppStore: ObservableObject {
             Task { await refresh() }
         } else {
             loadDirectAccounts()
+            #if DEBUG
+            // اختبار الواجهة يمنع الشبكة كي تبقى بيانات الترحيل ثابتة.
+            guard !ProcessInfo.processInfo.arguments.contains("--no-refresh") else { return }
+            #endif
             Task { await refresh() }
         }
     }
 
     func refreshIfStale() {
         guard !isDemo else { return }
+        #if DEBUG
+        guard !ProcessInfo.processInfo.arguments.contains("--no-refresh") else { return }
+        #endif
         guard autoSync else { return }
         guard lastRefreshed != nil, !isLoading, !isSyncing else { return }
         if let lastAutoRefresh, Date().timeIntervalSince(lastAutoRefresh) < 90 { return }
