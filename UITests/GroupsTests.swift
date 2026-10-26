@@ -42,6 +42,44 @@ final class GroupsTests: XCTestCase {
         }
     }
 
+    private func waitForCleanedText(
+        _ expected: String,
+        in app: XCUIApplication,
+        timeout: TimeInterval = 5
+    ) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            let found = app.staticTexts.allElementsBoundByIndex.contains {
+                clean($0.label) == expected
+            }
+            if found { return true }
+            Thread.sleep(forTimeInterval: 0.25)
+        } while Date() < deadline
+        return false
+    }
+
+    /// يعيد نص العنصر المطابق بعد إزالة علامات الاتجاه، أو nil.
+    private func scrollUntilCleanedText(
+        containing fragment: String,
+        in app: XCUIApplication,
+        maxSwipes: Int = 18
+    ) -> String? {
+        for _ in 0..<maxSwipes {
+            let matches = app.staticTexts.allElementsBoundByIndex.filter {
+                clean($0.label).contains(fragment)
+            }
+            if let hittable = matches.first(where: { $0.isHittable }) {
+                return clean(hittable.label)
+            }
+            app.swipeUp(velocity: .fast)
+            Thread.sleep(forTimeInterval: 0.35)
+        }
+        let matches = app.staticTexts.allElementsBoundByIndex.filter {
+            clean($0.label).contains(fragment)
+        }
+        return matches.first.map { clean($0.label) }
+    }
+
     private func replaceText(in field: XCUIElement, with text: String) {
         XCTAssertTrue(field.waitForExistence(timeout: 5), "Text field was not found")
         field.tap()
@@ -106,7 +144,10 @@ final class GroupsTests: XCTestCase {
             scrollUntilHittable(groupTwo, in: app, maxSwipes: 20),
             "Migrated group 2 was not shown"
         )
-        XCTAssertTrue(app.staticTexts["3 من 7"].exists, "Group 2 should contain 3 of 7 accounts")
+        XCTAssertTrue(
+            waitForCleanedText("3 من 7", in: app),
+            "Group 2 should contain 3 of 7 accounts"
+        )
         attach("02-migrated-group-2")
 
         // ٢) السعة: الحساب الثامن يجب ألا يستطيع الانتقال إلى مجموعة ممتلئة.
@@ -148,7 +189,10 @@ final class GroupsTests: XCTestCase {
             scrollUntilHittable(emptyGroupTitle, in: app, maxSwipes: 20),
             "New empty group was not shown"
         )
-        XCTAssertTrue(app.staticTexts["0 من 7"].exists, "New group should start empty")
+        XCTAssertTrue(
+            waitForCleanedText("0 من 7", in: app),
+            "New group should start empty"
+        )
         attach("05-created-empty-group")
 
         // ٥) نقل الحساب الأول إلى أول موضع في المجموعة الثانية.
@@ -165,14 +209,15 @@ final class GroupsTests: XCTestCase {
         XCTAssertTrue(moveToast.waitForExistence(timeout: 4), "Move confirmation toast was not shown")
         attach("06-moved-to-group-2")
 
-        let positionBar = app.staticTexts
-            .matching(NSPredicate(format: "label CONTAINS %@", "الموضع 1 من 4"))
-            .firstMatch
-        XCTAssertTrue(
-            scrollUntilHittable(positionBar, in: app, maxSwipes: 24),
-            "Moved account should be first in group 2"
-        )
-        let positionText = clean(positionBar.label)
+        guard let positionText = scrollUntilCleanedText(
+            containing: "الموضع 1 من 4",
+            in: app,
+            maxSwipes: 24
+        ) else {
+            attach("position-not-found")
+            XCTFail("Moved account should be first in group 2")
+            return
+        }
         XCTAssertTrue(
             positionText.contains("مفضلة"),
             "Position bar should name the group, got: \(positionText)"
@@ -186,7 +231,7 @@ final class GroupsTests: XCTestCase {
         XCTAssertTrue(fineTop.isEnabled, "Moving to top should be enabled for the last account")
         fineTop.tap()
         XCTAssertTrue(
-            app.staticTexts["الموضع 1 من 4"].waitForExistence(timeout: 3),
+            waitForCleanedText("الموضع 1 من 4", in: app, timeout: 4),
             "Moving to group top did not update the position"
         )
 
@@ -194,7 +239,7 @@ final class GroupsTests: XCTestCase {
         XCTAssertTrue(fineDown.isEnabled, "Moving one step down should be enabled")
         fineDown.tap()
         XCTAssertTrue(
-            app.staticTexts["الموضع 2 من 4"].waitForExistence(timeout: 3),
+            waitForCleanedText("الموضع 2 من 4", in: app, timeout: 4),
             "One-step move did not update the position"
         )
         attach("08-fine-tuning")
@@ -225,7 +270,10 @@ final class GroupsTests: XCTestCase {
             scrollUntilHittable(newGroup, in: app, maxSwipes: 24),
             "New group was not shown after creating it from the move sheet"
         )
-        XCTAssertTrue(app.staticTexts["1 من 7"].exists, "New group should contain the moved account")
+        XCTAssertTrue(
+            waitForCleanedText("1 من 7", in: app),
+            "New group should contain the moved account"
+        )
         attach("10-final-groups")
     }
 }
