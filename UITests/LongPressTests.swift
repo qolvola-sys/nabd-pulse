@@ -52,7 +52,7 @@ final class LongPressTests: XCTestCase {
             return
         }
 
-        moveItem.tap()
+        moveItem.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         sleep(1)
         attach("group-sheet")
 
@@ -68,7 +68,7 @@ final class LongPressTests: XCTestCase {
             return
         }
 
-        groupTwo.tap()
+        groupTwo.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         sleep(1)
         attach("after-move")
 
