@@ -96,8 +96,8 @@ def main() -> None:
         if cells.get("A1") != "منصات الأصفر":
             fail(f"عنوان التقرير غير صحيح في A1: {cells.get('A1')!r}")
 
-        headers = ["التسلسل", "اسم الصفحة", "البرامج", "العدد المطلوب", "عدد النشر", "عدد المشاهدات", "الملاحظات", "الروابط"]
-        actual_headers = [cells.get(f"{column}5") for column in "ABCDEFGH"]
+        headers = ["التسلسل", "اسم الصفحة", "البرامج", "عدد النشر", "عدد المشاهدات", "الملاحظات", "الروابط"]
+        actual_headers = [cells.get(f"{column}5") for column in "ABCDEFG"]
         if actual_headers != headers:
             fail(f"رؤوس الجدول غير مطابقة: {actual_headers}")
 
@@ -115,20 +115,20 @@ def main() -> None:
             raise AssertionError("unreachable")
 
         tiktok_row = find_row("الأصفر علي")
-        if tiktok_row.get("E") != "2" or tiktok_row.get("F") != "3456789":
+        if tiktok_row.get("D") != "2" or tiktok_row.get("E") != "3456789":
             fail(f"أرقام صف TikTok غير صحيحة: {tiktok_row}")
-        if tiktok_row.get("H") != "https://www.tiktok.com/@yellow.plus":
-            fail(f"رابط صف TikTok غير صحيح: {tiktok_row.get('H')!r}")
+        if tiktok_row.get("G") != "https://www.tiktok.com/@yellow.plus":
+            fail(f"رابط صف TikTok غير صحيح: {tiktok_row.get('G')!r}")
 
         facebook_row = find_row("صفحة فيسبوك")
-        if facebook_row.get("E") != "7" or facebook_row.get("F") != "98000":
+        if facebook_row.get("D") != "7" or facebook_row.get("E") != "98000":
             fail(f"أرقام صف فيسبوك غير صحيحة: {facebook_row}")
         if facebook_row.get("C") != "فيسبوك":
             fail(f"برنامج صف فيسبوك غير صحيح: {facebook_row.get('C')!r}")
 
         # يجب أن تكون الأرقام خلايا رقمية حقيقية لا نصوصاً.
         for cell in sheet1.findall(".//m:sheetData/m:row/m:c", NS):
-            if cell.get("r") in {f"{column}{row_number}" for row_number, row in rows.items() if row.get("B") in {"الأصفر علي", "صفحة فيسبوك"} for column in "EF"}:
+            if cell.get("r") in {f"{column}{row_number}" for row_number, row in rows.items() if row.get("B") in {"الأصفر علي", "صفحة فيسبوك"} for column in "DE"}:
                 if cell.get("t") == "inlineStr":
                     fail(f"الخلية {cell.get('r')} مخزّنة كنص بدل رقم")
                 if not cell_value(cell).isdigit():
@@ -138,8 +138,8 @@ def main() -> None:
             merge.get("ref")
             for merge in sheet1.findall(".//m:mergeCells/m:mergeCell", NS)
         }
-        if "A1:H3" not in merges:
-            fail(f"دمج العنوان A1:H3 غير موجود. الموجود: {sorted(merges)[:8]}")
+        if "A1:G3" not in merges:
+            fail(f"دمج العنوان A1:G3 غير موجود. الموجود: {sorted(merges)[:8]}")
 
         view = sheet1.find(".//m:sheetView", NS)
         if view is None or view.get("rightToLeft") != "1":
@@ -162,6 +162,23 @@ def main() -> None:
             fail(f"رابط TikTok غير موجود في العلاقات: {external_targets}")
         if "https://www.facebook.com/yellowplus" not in external_targets:
             fail(f"رابط فيسبوك غير موجود في العلاقات: {external_targets}")
+
+        sheet2 = read_xml(archive, "xl/worksheets/sheet2.xml")
+        summary_cells = sheet_cells(sheet2)
+        if summary_cells.get("A1") != "ملخص تقرير يومي":
+            fail(f"عنوان ورقة الملخص غير صحيح: {summary_cells.get('A1')!r}")
+        if [summary_cells.get(f"{column}5") for column in "AB"] != ["المؤشر", "القيمة"]:
+            fail(f"رؤوس ملخص المؤشرات غير صحيحة: {summary_cells}")
+        group_headers = [summary_cells.get(f"{column}14") for column in "ABCDE"]
+        if group_headers != ["المجموعة", "الصفحات", "المنشورات", "المشاهدات", "الحالة"]:
+            fail(f"رؤوس جدول الملخص غير صحيحة: {group_headers}")
+        summary_merges = {
+            merge.get("ref")
+            for merge in sheet2.findall(".//m:mergeCells/m:mergeCell", NS)
+        }
+        for expected in ("A1:E2", "A3:E3", "A5:E5"):
+            if expected not in summary_merges:
+                fail(f"دمج ورقة الملخص {expected} غير موجود. الموجود: {sorted(summary_merges)[:8]}")
 
         styles = read_xml(archive, "xl/styles.xml")
         formats = [

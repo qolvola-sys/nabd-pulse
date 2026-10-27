@@ -174,7 +174,7 @@ struct ReportEditorView: View {
                 metric(value: Num.full(Int64(draft.rows.count)), label: "صفحة", tint: Theme.gold)
             }
 
-            Text("تعديل رقم في أي صف يحوّله إلى «إدخال يدوي» حتى لا يُقدَّم كرقم TikTok دقيق. تعديل الاسم أو الملاحظات فقط لا يغيّر دقة الرقم.")
+            Text("تعديل رقم في أي صف يحوّله إلى «إدخال يدوي» حتى لا يُقدَّم كرقم منصة دقيق. تعديل الاسم أو الملاحظات فقط لا يغيّر دقة الرقم.")
                 .font(.system(size: 9.5))
                 .foregroundColor(Theme.textTertiary)
                 .lineSpacing(3)
@@ -366,8 +366,6 @@ struct ReportEditorView: View {
 
                         HStack(spacing: 5) {
                             Text(row.program)
-                            Text("·")
-                            Text(row.required)
                             if !row.notes.isEmpty {
                                 Text("·")
                                 Text(row.notes)
@@ -477,7 +475,7 @@ struct ReportEditorView: View {
                 }
             }
 
-            Text("تفاصيل المنشورات هي أرقام القراءة الأصلية من TikTok. إذا عدّلت أرقام صف يدوياً، يبقى الصف المعدّل في ورقة الملخص وتظهر التفاصيل الأصلية هنا.")
+            Text("تفاصيل المنشورات هي أرقام القراءة الأصلية من المنصات. إذا عدّلت أرقام صف يدوياً، يبقى الصف المعدّل في ورقة الملخص وتظهر التفاصيل الأصلية هنا.")
                 .font(.system(size: 9))
                 .foregroundColor(Theme.textTertiary)
                 .lineSpacing(3)
@@ -544,7 +542,6 @@ struct ReportEditorView: View {
         let row = ReportRow(
             pageName: "صفحة جديدة",
             platform: .facebook,
-            required: "حسب التبليغ",
             quality: .manual,
             isManual: true
         )
@@ -645,7 +642,6 @@ private struct ReportRowEditorSheet: View {
     @State private var pageName: String
     @State private var platform: ReportPlatform
     @State private var program: String
-    @State private var required: String
     @State private var postsText: String
     @State private var viewsText: String
     @State private var notes: String
@@ -658,7 +654,6 @@ private struct ReportRowEditorSheet: View {
         _pageName = State(initialValue: row.pageName)
         _platform = State(initialValue: row.platform)
         _program = State(initialValue: row.program)
-        _required = State(initialValue: row.required)
         _postsText = State(initialValue: row.posts.map { String($0) } ?? "")
         _viewsText = State(initialValue: row.views.map { String($0) } ?? "")
         _notes = State(initialValue: row.notes)
@@ -694,9 +689,6 @@ private struct ReportRowEditorSheet: View {
                         fieldLabel("البرنامج")
                         input("مثال: فيسبوك أو تيك توك", text: $program)
 
-                        fieldLabel("العدد المطلوب")
-                        input("مثال: 8 أو حسب التبليغ", text: $required)
-
                         HStack(spacing: 10) {
                             VStack(alignment: .leading, spacing: 6) {
                                 fieldLabel("عدد النشر")
@@ -719,7 +711,12 @@ private struct ReportRowEditorSheet: View {
                             .overlay(RoundedRectangle(cornerRadius: 13, style: .continuous).strokeBorder(Theme.borderSoft, lineWidth: 1))
 
                         fieldLabel("الرابط")
-                        input("https://www.tiktok.com/@...", text: $url, keyboard: .URL, ltr: true)
+                        input(
+                            platform == .facebook ? "https://www.facebook.com/..." : "https://www.tiktok.com/@...",
+                            text: $url,
+                            keyboard: .URL,
+                            ltr: true
+                        )
 
                         if let validationMessage {
                             Text(validationMessage)
@@ -767,7 +764,7 @@ private struct ReportRowEditorSheet: View {
                 Text("تعديل الصف")
                     .font(.system(size: 17, weight: .heavy, design: .rounded))
                     .foregroundColor(Theme.text)
-                Text(row.isManual ? "إدخال يدوي" : "بيانات TikTok")
+                Text(row.isManual ? "إدخال يدوي" : "بيانات \(row.platform.title)")
                     .font(.system(size: 10))
                     .foregroundColor(Theme.textTertiary)
             }
@@ -789,9 +786,9 @@ private struct ReportRowEditorSheet: View {
 
     private var qualityHint: String {
         if row.isManual || row.quality == .manual {
-            return "هذا الصف إدخال يدوي. يبقى كذلك حتى لو أدخلت أرقاماً، ولا يُحتسب ضمن أرقام TikTok الدقيقة."
+            return "هذا الصف إدخال يدوي. يبقى كذلك حتى لو أدخلت أرقاماً، ولا يُحتسب ضمن أرقام المنصات الدقيقة."
         }
-        return "إذا غيّرت عدد النشر أو المشاهدات، سيتحول الصف تلقائياً إلى إدخال يدوي حتى تبقى الأرقام الدقيقة من TikTok واضحة."
+        return "إذا غيّرت عدد النشر أو المشاهدات، سيتحول الصف تلقائياً إلى إدخال يدوي حتى تبقى الأرقام الدقيقة من \(row.platform.title) واضحة."
     }
 
     private func fieldLabel(_ text: String) -> some View {
@@ -849,7 +846,6 @@ private struct ReportRowEditorSheet: View {
         updated.program = program.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? platform.defaultProgram
             : program.trimmingCharacters(in: .whitespacesAndNewlines)
-        updated.required = required.trimmingCharacters(in: .whitespacesAndNewlines)
         updated.posts = posts.map { Int($0) }
         updated.views = views
         updated.notes = notes.trimmingCharacters(in: .whitespacesAndNewlines)

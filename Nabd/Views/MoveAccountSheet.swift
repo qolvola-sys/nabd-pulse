@@ -32,6 +32,10 @@ struct MoveAccountSheet: View {
         store.groupInfo(for: account.id)
     }
 
+    private var handleText: String {
+        account.isFacebook ? account.handle : "@\(account.handle)"
+    }
+
     var body: some View {
         ZStack {
             AppBackground()
@@ -88,9 +92,9 @@ struct MoveAccountSheet: View {
 
     private var headerSubtitle: String {
         guard let info = currentInfo else {
-            return "@\(account.handle) · بدون مجموعة"
+            return "\(handleText) · بدون مجموعة"
         }
-        return "@\(account.handle) · \(info.group.name) · \(Num.full(Int64(info.index + 1))) من \(Num.full(Int64(info.total)))"
+        return "\(handleText) · \(info.group.name) · \(Num.full(Int64(info.index + 1))) من \(Num.full(Int64(info.total)))"
     }
 
     private var groupList: some View {
@@ -368,7 +372,7 @@ struct MoveAccountSheet: View {
             withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
                 store.moveAccount(account.id, toPositionInGroup: 0)
             }
-            store.showToast("تم نقل @\(account.handle) إلى مقدمة \(group.name)", .success)
+            store.showToast("تم نقل \(handleText) إلى مقدمة \(group.name)", .success)
             return
         }
 
@@ -387,7 +391,7 @@ struct MoveAccountSheet: View {
             store.showToast("تعذّر نقل الحساب إلى هذه المجموعة", .info)
             return
         }
-        store.showToast("تم نقل @\(account.handle) إلى \(group.name)", .success)
+        store.showToast("تم نقل \(handleText) إلى \(group.name)", .success)
         dismiss()
     }
 
@@ -438,7 +442,7 @@ struct MoveAccountSheet: View {
 
         guard let group = store.createGroup(named: name) else { return false }
         if store.moveAccount(account.id, toGroup: group.id) {
-            store.showToast("تم إنشاء «\(group.name)» ونقل @\(account.handle) إليها", .success)
+            store.showToast("تم إنشاء «\(group.name)» ونقل \(handleText) إليها", .success)
             // تُغلق نافذة التسمية أولًا، ثم نافذة النقل بعدها بقليل.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
                 dismiss()

@@ -130,8 +130,8 @@ final class ReportsManager: ObservableObject {
     }
 
     private func rememberManualRows(in document: ReportDocument) {
-        // الصفحات المرتبطة بحساب TikTok لا تصبح قوالب حتى لو عُدّلت
-        // أرقامها يدوياً؛ القالب مخصص للصفحات المضافة مستقلة (فيسبوك وغيرها).
+        // الصفحات المرتبطة بحساب لا تصبح قوالب حتى لو عُدّلت أرقامها يدوياً؛
+        // القالب مخصص للصفحات المضافة مستقلة (فيسبوك وغيرها).
         let templates = document.rows
             .filter { $0.isManual && $0.accountID == nil }
             .map {
@@ -140,7 +140,6 @@ final class ReportsManager: ObservableObject {
                     pageName: $0.pageName,
                     platform: $0.platform,
                     program: $0.program,
-                    required: $0.required,
                     notes: $0.notes,
                     url: $0.url
                 )
@@ -169,7 +168,7 @@ final class ReportsManager: ObservableObject {
             return nil
         }
         guard store.isDirect else {
-            lastError = "التقارير تقرأ TikTok مباشرة. أوقف الوضع التجريبي واستخدم مصدر «TikTok مباشرة» أولاً."
+            lastError = "التقارير تقرأ الصفحات مباشرة. أوقف الوضع التجريبي واستخدم مصدر «TikTok مباشرة» أولاً."
             return nil
         }
         guard !store.accounts.isEmpty else {
@@ -231,21 +230,29 @@ final class ReportsManager: ObservableObject {
                     kind: kind,
                     current: completed - 1,
                     total: accounts.count,
-                    handle: "@\(account.handle)",
+                    handle: account.platform == .facebook ? account.handle : "@\(account.handle)",
                     phase: "قراءة منشورات \(account.displayName)"
                 )
 
-                let payload = await WeeklyWebScanner.shared.scan(
-                    handle: account.handle,
-                    cutoff: startUnix
-                )
-
-                let parsed = parse(
-                    payload: payload,
-                    account: account,
-                    startUnix: startUnix,
-                    endUnix: endUnix
-                )
+                let parsed: ParsedAccount
+                if account.platform == .facebook {
+                    parsed = await parseFacebook(
+                        account: account,
+                        startUnix: startUnix,
+                        endUnix: endUnix
+                    )
+                } else {
+                    let payload = await WeeklyWebScanner.shared.scan(
+                        handle: account.handle,
+                        cutoff: startUnix
+                    )
+                    parsed = parse(
+                        payload: payload,
+                        account: account,
+                        startUnix: startUnix,
+                        endUnix: endUnix
+                    )
+                }
                 rows.append(parsed.row)
                 reportPosts.append(contentsOf: parsed.posts)
 
@@ -253,7 +260,7 @@ final class ReportsManager: ObservableObject {
                     kind: kind,
                     current: completed,
                     total: accounts.count,
-                    handle: "@\(account.handle)",
+                    handle: account.platform == .facebook ? account.handle : "@\(account.handle)",
                     phase: "تمت قراءة \(completed) من \(accounts.count)"
                 )
             }
@@ -272,7 +279,6 @@ final class ReportsManager: ObservableObject {
                     pageName: template.pageName,
                     platform: template.platform,
                     program: template.program,
-                    required: template.required,
                     posts: nil,
                     views: nil,
                     notes: template.notes,
@@ -453,7 +459,6 @@ final class ReportsManager: ObservableObject {
                     pageName: account.displayName,
                     platform: .tiktok,
                     program: "تيك توك",
-                    required: "8",
                     posts: nil,
                     views: nil,
                     notes: "تعذّرت قراءة الصفحة. أعد توليد التقرير أو افتح التقرير لتعديله.",
@@ -508,7 +513,6 @@ final class ReportsManager: ObservableObject {
             pageName: account.displayName,
             platform: .tiktok,
             program: "تيك توك",
-            required: "8",
             posts: windowVideos.count,
             views: views,
             notes: notes,
@@ -519,23 +523,134 @@ final class ReportsManager: ObservableObject {
         return ParsedAccount(row: row, posts: posts)
     }
 
+    /// يقرأ صفحة فيسبوك العامة وقت التوليد. المنشورات المتاحة علناً هي آخر
+    /// ٢٠ منشوراً، ومشاهدات الفيديو فقط هي التي تُنشر. نعلّم النتيجة جزئية
+    /// أو تقريبية إن لم تغطِّ النافذة كاملة أو إن وُجدت منشورات بلا مشاهدات.
+    private func parseFacebook(
+        account: Account,
+        startUnix: Int,
+        endUnix: Int
+    ) async -> ParsedAccount {
+        let baseURL = account.url.isEmpty
+            ? "https://www.facebook.com/\(account.handle)"
+            : account.url
+
+        do {
+            let result = try await DirectFacebookService.shared.fetch(
+                handle: account.handle,
+                url: baseURL,
+                createdAt: account.createdAt
+            )
+            let videos = result.videos
+            let windowVideos = videos.filter {
+                $0.createTime >= startUnix && $0.createTime < endUnix
+            }
+            let complete = facebookWindowComplete(videos: videos, startUnix: startUnix)
+            let views = windowVideos.reduce(Int64(0)) { $0 + $1.views }
+            let allExact = !windowVideos.isEmpty && windowVideos.allSatisfy { $0.viewsExact }
+
+            let quality: ReportQuality
+            let notes: String
+            if windowVideos.isEmpty {
+                quality = .partial
+                notes = "لم تُرجع الصفحة منشورات عامة داخل الفترة. قد تكون الصفحة جديدة أو تحدّ فيسبوك المحتوى العام."
+            } else if !complete {
+                quality = .partial
+                notes = "أحدث ٢٠ منشوراً فقط متاحة علناً؛ قد توجد منشورات أخرى داخل الفترة. أعد التوليد لاحقاً."
+            } else if !allExact {
+                quality = .approximate
+                notes = "مشاهدات فيسبوك المتاحة علناً للفيديو فقط؛ المنشورات النصية والصور بلا مشاهدات معلنة."
+            } else {
+                quality = .exact
+                notes = "مشاهدات فيديو فيسبوك من الصفحة العامة."
+            }
+
+            let posts = windowVideos.map { video in
+                ReportPost(
+                    id: video.id,
+                    accountID: account.id,
+                    pageName: account.displayName,
+                    handle: account.handle,
+                    platform: .facebook,
+                    title: video.title,
+                    url: video.shareUrl ?? baseURL,
+                    publishedAt: Date(timeIntervalSince1970: TimeInterval(video.createTime)),
+                    views: video.views,
+                    likes: video.likes,
+                    comments: video.comments,
+                    shares: video.shares,
+                    viewsExact: video.viewsExact
+                )
+            }
+
+            let row = ReportRow(
+                accountID: account.id,
+                pageName: account.displayName,
+                platform: .facebook,
+                program: "فيسبوك",
+                posts: windowVideos.count,
+                views: views,
+                notes: notes,
+                url: baseURL,
+                quality: quality
+            )
+            return ParsedAccount(row: row, posts: posts)
+        } catch {
+            return ParsedAccount(
+                row: ReportRow(
+                    accountID: account.id,
+                    pageName: account.displayName,
+                    platform: .facebook,
+                    program: "فيسبوك",
+                    posts: nil,
+                    views: nil,
+                    notes: "تعذّرت قراءة صفحة فيسبوك العامة. أعد التوليد أو افتح التقرير لتعديله.",
+                    url: baseURL,
+                    quality: .unavailable
+                ),
+                posts: []
+            )
+        }
+    }
+
+    /// النافذة مكتملة إذا انتهت المنشورات المحمّلة قبل بدايتها، أو إذا كانت
+    /// الصفحة أعادت أقل من ٢٠ منشوراً (أي أن الخلاصة وصلت لآخرها).
+    private func facebookWindowComplete(videos: [VideoItem], startUnix: Int) -> Bool {
+        if videos.isEmpty { return true }
+        if videos.count < 20 { return true }
+        let oldest = videos.map(\.createTime).min() ?? 0
+        return oldest > 0 && oldest < startUnix
+    }
+
     private func generatedNote(for groups: [ReportGroup]) -> String {
         let rows = groups.flatMap(\.rows)
         let incomplete = rows.filter { $0.quality == .partial || $0.quality == .unavailable }.count
         let approximate = rows.filter { $0.quality == .approximate }.count
         let manual = rows.filter { $0.isManual || $0.quality == .manual }.count
+        let hasFacebook = rows.contains { $0.platform == .facebook && !$0.isManual && $0.quality != .manual }
+        let hasTikTok = rows.contains { $0.platform == .tiktok && !$0.isManual && $0.quality != .manual }
         var parts: [String] = []
 
         if incomplete == 0 && approximate == 0 {
-            parts.append("تمت قراءة منشورات TikTok ومشاهداتها مباشرة. أرقام TikTok دقيقة ١٠٠٪ وقت التوليد.")
+            if hasTikTok && hasFacebook {
+                parts.append("تمت قراءة منشورات TikTok وفيسبوك ومشاهداتها المتاحة مباشرة وقت التوليد.")
+            } else if hasFacebook {
+                parts.append("تمت قراءة منشورات فيسبوك ومشاهدات الفيديو المتاحة علناً مباشرة وقت التوليد.")
+            } else {
+                parts.append("تمت قراءة منشورات TikTok ومشاهداتها مباشرة وقت التوليد.")
+            }
         } else if incomplete > 0 {
             parts.append("توجد \(ReportNumber.full(Int64(incomplete))) صفحة لم تكتمل قراءتها؛ الأرقام الظاهرة لما تم تحميله فقط.")
         } else {
-            parts.append("توجد \(ReportNumber.full(Int64(approximate))) صفحة بمشاهدات مختصرة من TikTok.")
+            parts.append("توجد \(ReportNumber.full(Int64(approximate))) صفحة بمشاهدات عامة غير مكتملة.")
+        }
+
+        if approximate > 0 && hasFacebook {
+            parts.append("مشاهدات فيسبوك تُنشر للفيديو فقط؛ المنشورات النصية والصور لا تكشف مشاهدات عامة.")
         }
 
         if manual > 0 {
-            parts.append("توجد \(ReportNumber.full(Int64(manual))) صفحة إدخال يدوي تُعبأ داخل التقرير ولا تُقرأ من TikTok.")
+            parts.append("توجد \(ReportNumber.full(Int64(manual))) صفحة إدخال يدوي تُعبأ داخل التقرير ولا تُقرأ تلقائياً.")
         }
         return parts.joined(separator: " ")
     }

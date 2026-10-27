@@ -15,6 +15,10 @@ struct AccountDetailView: View {
 
     private var current: Account { detail ?? account }
 
+    private var handleText: String {
+        current.isFacebook ? current.handle : "@" + current.handle
+    }
+
     private var dailyExact: Bool {
         current.dailyComplete && current.dailyViewsExact
     }
@@ -40,6 +44,15 @@ struct AccountDetailView: View {
     }
 
     private var weeklyFootnote: String {
+        if current.isFacebook {
+            if current.weeklyComplete && current.weeklyViewsExact {
+                return "كل منشورات آخر ٧ أيام المتاحة علناً محمّلة، ومشاهدات الفيديو دقيقة 100%."
+            }
+            if !current.weeklyComplete {
+                return "≈ تُعرض أحدث ٢٠ منشوراً علنياً؛ قد تكون هناك منشورات أقدم لم يعرضها فيسبوك للزائر."
+            }
+            return "≈ مشاهدات فيسبوك متاحة للفيديو فقط؛ المنشورات النصية والصور لا تكشف مشاهدات عامة."
+        }
         if current.weeklyComplete && current.weeklyViewsExact {
             return "كل منشورات آخر ٧ أيام محمّلة، والنتيجة دقيقة 100% (١٬٠٠٠٬٠٠٠ مشاهدة = 100%)."
         }
@@ -87,7 +100,7 @@ struct AccountDetailView: View {
         .presentationDetents([.large])
         .presentationDragIndicator(.hidden)
         .task { await load() }
-        .confirmationDialog("إزالة @\(current.handle)؟", isPresented: $confirmDelete, titleVisibility: .visible) {
+        .confirmationDialog("إزالة \(handleText)؟", isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("إزالة من \(AppVariant.name)", role: .destructive) {
                 Task {
                     await store.delete(current)
@@ -96,7 +109,7 @@ struct AccountDetailView: View {
             }
             Button("إلغاء", role: .cancel) {}
         } message: {
-            Text("لن يتأثر حساب TikTok نفسه.")
+            Text("لن يتأثر \(current.isFacebook ? "حساب فيسبوك" : "حساب TikTok") نفسه.")
         }
         .safeAreaInset(edge: .bottom) {
             bottomBar
@@ -127,7 +140,7 @@ struct AccountDetailView: View {
                 } label: { Label("نسخ الرابط", systemImage: "link") }
                 Button {
                     if let url = URL(string: current.url) { UIApplication.shared.open(url) }
-                } label: { Label("فتح في TikTok", systemImage: "arrow.up.right.square") }
+                } label: { Label("فتح في \(current.platform.title)", systemImage: "arrow.up.right.square") }
                 Button {
                     Task { await load(forceSync: true) }
                 } label: { Label("مزامنة الآن", systemImage: "arrow.triangle.2.circlepath") }
@@ -177,13 +190,17 @@ struct AccountDetailView: View {
                             .foregroundColor(Theme.cyan)
                     }
                 }
-                Text("@" + current.handle)
+                Text(handleText)
                     .font(.system(size: 12.5, weight: .medium))
                     .foregroundColor(Theme.textSecondary)
             }
 
             HStack(spacing: 7) {
-                Chip(text: "TikTok", color: Theme.pink, icon: "play.rectangle.fill")
+                Chip(
+                    text: current.platform.title,
+                    color: current.isFacebook ? Theme.cyan : Theme.pink,
+                    icon: current.platform.icon
+                )
                 Chip(
                     text: current.statusLabel,
                     color: current.publicStats ? Theme.cyan : (current.connected ? (current.isHealthy ? Theme.green : Theme.gold) : Theme.gold),
@@ -234,12 +251,14 @@ struct AccountDetailView: View {
             }
 
             Text(current.dailyComplete && current.dailyViewsExact
-                 ? "كل منشورات آخر ٢٤ ساعة محمّلة، والمشاهدات دقيقة 100%."
-                 : (current.dailyComplete
-                    ? "≈ مشاهدات الفيديو العامة يقرّبها TikTok."
-                    : (AppVariant.readsEveryWeeklyPost
-                       ? "بعض منشورات آخر ٢٤ ساعة لم تُقرأ بعد؛ تُعرض المنشورات المحمّلة."
-                       : "الحساب نشر أكثر من ١٠ منشورات في ٢٤ ساعة؛ تُعرض أحدث ١٠ فقط.")))
+                 ? "كل منشورات آخر ٢٤ ساعة المتاحة محمّلة، والمشاهدات دقيقة 100%."
+                 : (current.isFacebook
+                    ? "≈ مشاهدات فيسبوك متاحة للفيديو فقط، وتُعرض أحدث ٢٠ منشوراً علنياً."
+                    : (current.dailyComplete
+                       ? "≈ مشاهدات الفيديو العامة يقرّبها TikTok."
+                       : (AppVariant.readsEveryWeeklyPost
+                          ? "بعض منشورات آخر ٢٤ ساعة لم تُقرأ بعد؛ تُعرض المنشورات المحمّلة."
+                          : "الحساب نشر أكثر من ١٠ منشورات في ٢٤ ساعة؛ تُعرض أحدث ١٠ فقط."))))
                 .font(.system(size: 9.5))
                 .foregroundColor(Theme.textTertiary)
                 .lineSpacing(3)
@@ -372,7 +391,7 @@ struct AccountDetailView: View {
 
     private var statsGrid: some View {
         LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
-            StatCard(title: "المنشورات", value: Num.maybeApprox(Int64(current.posts), exact: current.profileExact), icon: "square.stack.3d.up.fill", tint: Theme.cyan)
+            StatCard(title: "المنشورات", value: Num.maybeApprox(Int64(current.posts), exact: current.postsCountExact), icon: "square.stack.3d.up.fill", tint: Theme.cyan)
             StatCard(
                 title: "المشاهدات",
                 value: current.hasViewData ? Num.maybeApprox(current.views, exact: current.viewsExact) : "—",
@@ -411,7 +430,7 @@ struct AccountDetailView: View {
                 engagementItem(icon: "arrowshape.turn.up.right.fill", value: current.shares, label: "مشاركة", tint: Theme.violet)
                 Rectangle().fill(Theme.borderSoft).frame(width: 1, height: 26)
             } else {
-                engagementItem(icon: "square.stack.3d.up.fill", value: Int64(current.posts), label: "منشور", tint: Theme.cyan, exact: current.profileExact)
+                engagementItem(icon: "square.stack.3d.up.fill", value: Int64(current.posts), label: "منشور", tint: Theme.cyan, exact: current.postsCountExact)
                 Rectangle().fill(Theme.borderSoft).frame(width: 1, height: 26)
             }
             engagementItem(icon: "person.2.fill", value: current.followers, label: "متابع", tint: Theme.gold, exact: current.profileExact)
@@ -449,19 +468,25 @@ struct AccountDetailView: View {
                             .font(.system(size: 12, weight: .bold))
                             .foregroundColor(Theme.text)
                         Spacer()
-                        Text("\(Num.full(Int64(current.fetchedVideos))) من \(Num.maybeApprox(Int64(current.posts), exact: current.profileExact)) منشوراً")
+                        Text(current.isFacebook
+                             ? "آخر \(Num.full(Int64(current.fetchedVideos))) منشوراً متاحاً علناً"
+                             : "\(Num.full(Int64(current.fetchedVideos))) من \(Num.maybeApprox(Int64(current.posts), exact: current.postsCountExact)) منشوراً")
                             .font(.system(size: 10.5, weight: .medium, design: .rounded))
                             .foregroundColor(Theme.textSecondary)
                     }
                     ProgressBarLine(value: min(current.coverage, 1), gradient: Theme.violetGradient, height: 6)
                     Text(current.allPostsLoaded
-                         ? "كل منشورات الحساب محمّلة."
+                         ? "كل منشورات الحساب المتاحة محمّلة."
                          : "المعروض أحدث \(Num.full(Int64(current.fetchedVideos))) منشوراً متاحاً علناً.")
                         .font(.system(size: 10))
                         .foregroundColor(Theme.textTertiary)
-                    Text(current.viewsExact
-                         ? "مشاهدات المنشورات المحمّلة دقيقة 100%."
-                         : "مشاهدات الفيديو العامة يقرّبها TikTok — تظهر بعلامة ≈.")
+                    Text(current.isFacebook
+                         ? (current.viewsExact
+                            ? "مشاهدات الفيديو المحمّلة دقيقة 100%."
+                            : "≈ مشاهدات فيسبوك متاحة للفيديو فقط — المنشورات النصية والصور بلا مشاهدات معروضة.")
+                         : (current.viewsExact
+                            ? "مشاهدات المنشورات المحمّلة دقيقة 100%."
+                            : "مشاهدات الفيديو العامة يقرّبها TikTok — تظهر بعلامة ≈."))
                         .font(.system(size: 10))
                         .foregroundColor(current.viewsExact ? Theme.green.opacity(0.9) : Theme.gold.opacity(0.9))
                     Text("آخر مزامنة: \(Dates.relative(current.lastSyncedAt))")
@@ -520,7 +545,7 @@ struct AccountDetailView: View {
                 EmptyStateView(
                     icon: "video.badge.clock",
                     title: "لا توجد منشورات محفوظة بعد",
-                    message: "اضغط تحديث لجلب أحدث المنشورات من TikTok. تبقى الإحصاءات السابقة محفوظة إذا كان TikTok مشغولاً.",
+                    message: "اضغط تحديث لجلب أحدث المنشورات من \(current.platform.title). تبقى الإحصاءات السابقة محفوظة إذا كان \(current.platform.title) مشغولاً.",
                     actionTitle: "تحديث الآن",
                     action: { Task { await load(forceSync: true) } }
                 )

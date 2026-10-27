@@ -1,7 +1,7 @@
 import Foundation
 
 /// يبني ملف Excel حقيقياً (`.xlsx`) من مسودة التقرير.
-/// الورقة الأولى تطابق نموذج «منصات الأصفر»: العنوان، الأعمدة الثمانية،
+/// الورقة الأولى تطابق نموذج «منصات الأصفر»: العنوان، الأعمدة السبعة،
 /// صفوف الصفحات، فواصل المجموعات، والإجمالي. وتُضاف ورقة ملخص وورقة
 /// تفاصيل لكل منشور حتى يمكن التحقق من كل رقم.
 struct ReportExcelBuilder {
@@ -25,46 +25,46 @@ struct ReportExcelBuilder {
         // العنوان
         rows.append(mergedRow(
             text: document.title.isEmpty ? "منصات الأصفر" : document.title,
-            columns: 8,
+            columns: 7,
             style: .title,
             height: 28,
-            merge: "A1:H3",
+            merge: "A1:G3",
             mergeInto: &merges
         ))
-        rows.append(blankRow(columns: 8, style: .title, height: 28))
-        rows.append(blankRow(columns: 8, style: .title, height: 28))
+        rows.append(blankRow(columns: 7, style: .title, height: 28))
+        rows.append(blankRow(columns: 7, style: .title, height: 28))
 
         // الفترة ووقت التوليد
         let periodLine = "\(document.kind.longTitle)  ·  \(document.periodText)  ·  تم التوليد: \(ReportDates.displayDateTime(document.generatedAt))"
         rows.append(mergedRow(
             text: periodLine,
-            columns: 8,
+            columns: 7,
             style: .subtitle,
             height: 24,
-            merge: "A4:H4",
+            merge: "A4:G4",
             mergeInto: &merges
         ))
 
         // رأس الجدول
-        let headers = ["التسلسل", "اسم الصفحة", "البرامج", "العدد المطلوب", "عدد النشر", "عدد المشاهدات", "الملاحظات", "الروابط"]
+        let headers = ["التسلسل", "اسم الصفحة", "البرامج", "عدد النشر", "عدد المشاهدات", "الملاحظات", "الروابط"]
         rows.append(XLSXRow(cells: headers.map { XLSXCell.text($0, style: .tableHeader) }, height: 30))
 
         // فاصل كما في النموذج
-        rows.append(blankRow(columns: 8, style: .body, height: 8))
+        rows.append(blankRow(columns: 7, style: .body, height: 8))
 
         var serial: Int64 = 0
         for (groupIndex, group) in document.groups.enumerated() {
             if groupIndex > 0 {
-                rows.append(blankRow(columns: 8, style: .body, height: 8))
+                rows.append(blankRow(columns: 7, style: .body, height: 8))
             }
 
             let groupLine = "\(group.name)  ·  \(ReportNumber.full(Int64(group.rows.count))) صفحة  ·  \(ReportNumber.full(Int64(group.totalPosts))) منشور  ·  \(ReportNumber.full(group.totalViews)) مشاهدة"
             rows.append(mergedRow(
                 text: groupLine,
-                columns: 8,
+                columns: 7,
                 style: .section,
                 height: 25,
-                merge: "A\(rows.count + 1):H\(rows.count + 1)",
+                merge: "A\(rows.count + 1):G\(rows.count + 1)",
                 mergeInto: &merges
             ))
 
@@ -75,7 +75,6 @@ struct ReportExcelBuilder {
                     XLSXCell.integer(serial, style: alt ? .integerAlt : .integer),
                     XLSXCell.text(displayName(row.pageName), style: alt ? .bodyAlt : .body),
                     XLSXCell.text(row.program, style: alt ? .bodyAlt : .body),
-                    requiredCell(row.required, alt: alt),
                     optionalInteger(row.posts.map { Int64($0) }, alt: alt),
                     optionalInteger(row.views, alt: alt),
                     XLSXCell.text(row.notes, style: alt ? .bodyAlt : .body),
@@ -87,10 +86,10 @@ struct ReportExcelBuilder {
         if document.groups.isEmpty {
             rows.append(mergedRow(
                 text: "لا توجد صفحات في هذا التقرير",
-                columns: 8,
+                columns: 7,
                 style: .note,
                 height: 30,
-                merge: "A\(rows.count + 1):H\(rows.count + 1)",
+                merge: "A\(rows.count + 1):G\(rows.count + 1)",
                 mergeInto: &merges
             ))
         }
@@ -101,38 +100,37 @@ struct ReportExcelBuilder {
             XLSXCell.text("الإجمالي", style: .totalText),
             XLSXCell.text("", style: .totalText),
             XLSXCell.text("", style: .totalText),
-            XLSXCell.text("", style: .totalText),
             XLSXCell.integer(Int64(document.totalPosts), style: .totalInteger),
             XLSXCell.number(Double(document.totalViews), style: .totalNumber),
             XLSXCell.text(document.qualitySummary, style: .totalText),
             XLSXCell.text("", style: .totalText),
         ], height: 28))
-        merges.append("A\(totalStart):D\(totalStart)")
+        merges.append("A\(totalStart):C\(totalStart)")
 
         // ملاحظات الجودة
-        rows.append(blankRow(columns: 8, style: .body, height: 8))
+        rows.append(blankRow(columns: 7, style: .body, height: 8))
         rows.append(mergedRow(
             text: qualityNote(),
-            columns: 8,
+            columns: 7,
             style: .note,
             height: 42,
-            merge: "A\(rows.count + 1):H\(rows.count + 1)",
+            merge: "A\(rows.count + 1):G\(rows.count + 1)",
             mergeInto: &merges
         ))
         rows.append(mergedRow(
             text: "النافذة الزمنية: \(document.periodText). الحد الأخير غير شامل. المشاهدات هي الأرقام الفعلية وقت توليد التقرير، وقد تزيد بعد ذلك.",
-            columns: 8,
+            columns: 7,
             style: .note,
             height: 38,
-            merge: "A\(rows.count + 1):H\(rows.count + 1)",
+            merge: "A\(rows.count + 1):G\(rows.count + 1)",
             mergeInto: &merges
         ))
         rows.append(mergedRow(
-            text: "الخلايا الفارغة تعني عدم توفر إدخال لهذه الصفحة (مثل صفحات فيسبوك قبل الإدخال اليدوي). يمكن تعديل كل الحقول من شاشة التقرير ثم إعادة التصدير.",
-            columns: 8,
+            text: "الخلايا الفارغة تعني عدم توفر إدخال لهذه الصفحة. يمكن تعديل كل الحقول من شاشة التقرير ثم إعادة التصدير.",
+            columns: 7,
             style: .note,
             height: 38,
-            merge: "A\(rows.count + 1):H\(rows.count + 1)",
+            merge: "A\(rows.count + 1):G\(rows.count + 1)",
             mergeInto: &merges
         ))
 
@@ -144,7 +142,6 @@ struct ReportExcelBuilder {
                 XLSXColumn(width: 7),
                 XLSXColumn(width: 24),
                 XLSXColumn(width: 13),
-                XLSXColumn(width: 14),
                 XLSXColumn(width: 11),
                 XLSXColumn(width: 17),
                 XLSXColumn(width: 32),
@@ -166,22 +163,22 @@ struct ReportExcelBuilder {
 
         rows.append(mergedRow(
             text: "ملخص \(document.kind.title)",
-            columns: 6,
+            columns: 5,
             style: .title,
             height: 28,
-            merge: "A1:F2",
+            merge: "A1:E2",
             mergeInto: &merges
         ))
-        rows.append(blankRow(columns: 6, style: .title, height: 26))
+        rows.append(blankRow(columns: 5, style: .title, height: 26))
         rows.append(mergedRow(
             text: "\(document.spaceName)  ·  \(document.periodText)",
-            columns: 6,
+            columns: 5,
             style: .subtitle,
             height: 24,
-            merge: "A3:F3",
+            merge: "A3:E3",
             mergeInto: &merges
         ))
-        rows.append(blankRow(columns: 6, style: .body, height: 8))
+        rows.append(blankRow(columns: 5, style: .body, height: 8))
 
         rows.append(XLSXRow(cells: [
             XLSXCell.text("المؤشر", style: .tableHeader),
@@ -189,16 +186,15 @@ struct ReportExcelBuilder {
             XLSXCell.text("", style: .tableHeader),
             XLSXCell.text("", style: .tableHeader),
             XLSXCell.text("", style: .tableHeader),
-            XLSXCell.text("", style: .tableHeader),
         ], height: 28))
-        merges.append("A5:F5")
+        merges.append("A5:E5")
 
         let kpis: [(String, String)] = [
             ("المجموعات", ReportNumber.full(Int64(document.groups.count))),
             ("الصفحات", ReportNumber.full(Int64(document.rows.count))),
             ("إجمالي المنشورات", ReportNumber.full(Int64(document.totalPosts))),
             ("إجمالي المشاهدات", ReportNumber.full(document.totalViews)),
-            ("صفحات TikTok دقيقة", ReportNumber.full(Int64(document.exactRows.count))),
+            ("صفحات محمّلة بدقة", ReportNumber.full(Int64(document.exactRows.count))),
             ("صفحات تحتاج مراجعة", ReportNumber.full(Int64(document.incompleteRows.count + document.approximateRows.count))),
             ("صفحات إدخال يدوي", ReportNumber.full(Int64(document.manualRows.count))),
         ]
@@ -210,18 +206,16 @@ struct ReportExcelBuilder {
                 XLSXCell.text("", style: alt ? .bodyAlt : .body),
                 XLSXCell.text("", style: alt ? .bodyAlt : .body),
                 XLSXCell.text("", style: alt ? .bodyAlt : .body),
-                XLSXCell.text("", style: alt ? .bodyAlt : .body),
             ], height: 22))
             let rowNumber = rows.count
-            merges.append("B\(rowNumber):F\(rowNumber)")
+            merges.append("B\(rowNumber):E\(rowNumber)")
         }
 
-        rows.append(blankRow(columns: 6, style: .body, height: 10))
+        rows.append(blankRow(columns: 5, style: .body, height: 10))
 
         rows.append(XLSXRow(cells: [
             XLSXCell.text("المجموعة", style: .tableHeader),
             XLSXCell.text("الصفحات", style: .tableHeader),
-            XLSXCell.text("المطلوب", style: .tableHeader),
             XLSXCell.text("المنشورات", style: .tableHeader),
             XLSXCell.text("المشاهدات", style: .tableHeader),
             XLSXCell.text("الحالة", style: .tableHeader),
@@ -233,7 +227,6 @@ struct ReportExcelBuilder {
             rows.append(XLSXRow(cells: [
                 XLSXCell.text(group.name, style: alt ? .bodyAlt : .body),
                 XLSXCell.integer(Int64(group.rows.count), style: alt ? .integerAlt : .integer),
-                requiredCell(group.requiredTotalText, alt: alt),
                 XLSXCell.integer(Int64(group.totalPosts), style: alt ? .integerAlt : .integer),
                 XLSXCell.integer(group.totalViews, style: alt ? .integerAlt : .integer),
                 XLSXCell.text(quality.label, style: quality.style),
@@ -246,7 +239,6 @@ struct ReportExcelBuilder {
                 XLSXCell.blank(style: .integer),
                 XLSXCell.blank(style: .integer),
                 XLSXCell.blank(style: .integer),
-                XLSXCell.blank(style: .integer),
                 XLSXCell.text("—", style: .note),
             ], height: 22))
         }
@@ -254,19 +246,18 @@ struct ReportExcelBuilder {
         rows.append(XLSXRow(cells: [
             XLSXCell.text("الإجمالي", style: .totalText),
             XLSXCell.integer(Int64(document.rows.count), style: .totalInteger),
-            XLSXCell.text("", style: .totalText),
             XLSXCell.integer(Int64(document.totalPosts), style: .totalInteger),
             XLSXCell.number(Double(document.totalViews), style: .totalNumber),
             XLSXCell.text(document.qualitySummary, style: .totalText),
         ], height: 28))
 
-        rows.append(blankRow(columns: 6, style: .body, height: 8))
+        rows.append(blankRow(columns: 5, style: .body, height: 8))
         rows.append(mergedRow(
             text: document.note,
-            columns: 6,
+            columns: 5,
             style: .note,
             height: 36,
-            merge: "A\(rows.count + 1):F\(rows.count + 1)",
+            merge: "A\(rows.count + 1):E\(rows.count + 1)",
             mergeInto: &merges
         ))
 
@@ -276,7 +267,6 @@ struct ReportExcelBuilder {
             tabColor: "FF0369A1",
             columns: [
                 XLSXColumn(width: 24),
-                XLSXColumn(width: 16),
                 XLSXColumn(width: 16),
                 XLSXColumn(width: 16),
                 XLSXColumn(width: 18),
@@ -396,16 +386,6 @@ struct ReportExcelBuilder {
         return trimmed.isEmpty ? "—" : trimmed
     }
 
-    private func requiredCell(_ raw: String, alt: Bool) -> XLSXCell {
-        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return .blank(style: alt ? .bodyAlt : .body) }
-        let normalized = text.replacingOccurrences(of: ",", with: "")
-        if let number = Int64(normalized) {
-            return XLSXCell.integer(number, style: alt ? .integerAlt : .integer)
-        }
-        return XLSXCell.text(text, style: alt ? .bodyAlt : .body)
-    }
-
     private func optionalInteger(_ value: Int64?, alt: Bool) -> XLSXCell {
         guard let value else { return .blank(style: alt ? .integerAlt : .integer) }
         return XLSXCell.integer(value, style: alt ? .integerAlt : .integer)
@@ -467,7 +447,7 @@ struct ReportExcelBuilder {
     private func qualityNote() -> String {
         var parts: [String] = []
         if document.isFullyExact {
-            parts.append("كل مشاهدات منشورات TikTok في هذه الفترة قُرئت من statsV2 بدقة ١٠٠٪.")
+            parts.append("كل الأرقام المحمّلة في هذه الفترة قُرئت مباشرة من المنصة بدقة ١٠٠٪.")
         } else {
             parts.append(document.qualitySummary)
         }
@@ -475,18 +455,9 @@ struct ReportExcelBuilder {
             parts.append(document.note)
         }
         parts.append("لا تُقدَّم أي قراءة ناقصة كرقم نهائي؛ تُعلَّم الصفحة باللون والملاحظة المناسبة.")
-        return parts.joined(separator: " ")
-    }
-}
-
-private extension ReportGroup {
-    var requiredTotalText: String {
-        let values = rows.compactMap { row -> Int64? in
-            let text = row.required.replacingOccurrences(of: ",", with: "")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            return Int64(text)
+        if document.rows.contains(where: { $0.platform == .facebook }) {
+            parts.append("مشاهدات فيسبوك المتاحة علناً هي مشاهدات الفيديو فقط؛ المنشورات النصية والصور لا تكشف مشاهدات عامة.")
         }
-        guard !values.isEmpty else { return "—" }
-        return ReportNumber.full(values.reduce(Int64(0), +))
+        return parts.joined(separator: " ")
     }
 }

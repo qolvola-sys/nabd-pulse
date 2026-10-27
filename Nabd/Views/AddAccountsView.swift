@@ -5,6 +5,9 @@ struct AddAccountsView: View {
     @EnvironmentObject private var store: AppStore
     @Environment(\.dismiss) private var dismiss
 
+    /// المنصة التي تُضاف لها الروابط. TikTok افتراضياً، و«فيسبوك» من صفحته المستقلة.
+    var platform: AccountPlatform = .tiktok
+
     @State private var text: String = ""
     @State private var isSubmitting = false
     @State private var result: AddAccountsResponse?
@@ -22,7 +25,7 @@ struct AddAccountsView: View {
     }
 
     private var parsed: [(raw: String, handle: String?)] {
-        entries.map { ($0, AddAccountsView.handle(from: $0)) }
+        entries.map { ($0, AddAccountsView.handle(from: $0, platform: platform)) }
     }
 
     private var validHandles: [String] {
@@ -31,7 +34,11 @@ struct AddAccountsView: View {
     }
 
     private var existingHandles: Set<String> {
-        Set(store.accounts.map { $0.handle.lowercased() })
+        Set(
+            store.accounts
+                .filter { $0.platform == platform }
+                .map { $0.handle.lowercased() }
+        )
     }
 
     private var pendingHandles: [String] {
@@ -75,26 +82,35 @@ struct AddAccountsView: View {
         .presentationDragIndicator(.visible)
     }
 
+    private var platformName: String {
+        platform == .facebook ? "فيسبوك" : "TikTok"
+    }
+
     private var header: some View {
         HStack {
             VStack(alignment: .leading, spacing: 3) {
-                Text("إضافة حسابات")
-                    .font(.system(size: 22, weight: .heavy, design: .rounded))
-                    .foregroundColor(Theme.text)
+                HStack(spacing: 6) {
+                    Image(systemName: platform.icon)
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundColor(platform == .facebook ? Theme.cyan : Theme.pink)
+                    Text(platform == .facebook ? "إضافة صفحات فيسبوك" : "إضافة حسابات")
+                        .font(.system(size: 22, weight: .heavy, design: .rounded))
+                        .foregroundColor(Theme.text)
+                }
                 #if MUTABAA
                 if store.spacesEnabled {
-                    Text("الصق روابط TikTok — ستُضاف إلى مساحة «\(store.activeSpaceName)»")
+                    Text("الصق روابط \(platformName) — ستُضاف إلى مساحة «\(store.activeSpaceName)»")
                         .font(.system(size: 11.5))
                         .foregroundColor(Theme.textSecondary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
                 } else {
-                    Text("الصق روابط TikTok — رابط في كل سطر")
+                    Text("الصق روابط \(platformName) — رابط في كل سطر")
                         .font(.system(size: 11.5))
                         .foregroundColor(Theme.textSecondary)
                 }
                 #else
-                Text("الصق روابط TikTok — رابط في كل سطر")
+                Text("الصق روابط \(platformName) — رابط في كل سطر")
                     .font(.system(size: 11.5))
                     .foregroundColor(Theme.textSecondary)
                 #endif
@@ -132,7 +148,7 @@ struct AddAccountsView: View {
     private var inputCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 14) {
-                Label("روابط الحسابات", systemImage: "link")
+                Label(platform == .facebook ? "روابط الصفحات" : "روابط الحسابات", systemImage: "link")
                     .font(.system(size: 11.5, weight: .bold))
                     .foregroundColor(Theme.textSecondary)
                 Spacer(minLength: 12)
@@ -152,7 +168,9 @@ struct AddAccountsView: View {
 
             ZStack(alignment: .topLeading) {
                 if text.isEmpty {
-                    Text("https://www.tiktok.com/@username\n@username2\nhttps://vm.tiktok.com/ZMxxxxx/")
+                    Text(platform == .facebook
+                         ? "https://www.facebook.com/NASA\nhttps://www.facebook.com/profile.php?id=100044561550831\nNASA"
+                         : "https://www.tiktok.com/@username\n@username2\nhttps://vm.tiktok.com/ZMxxxxx/")
                         .font(.system(size: 12.5, design: .monospaced))
                         .foregroundColor(Theme.textTertiary)
                         .multilineTextAlignment(.leading)
@@ -209,13 +227,13 @@ struct AddAccountsView: View {
                     .font(.system(size: 11.5, weight: .bold))
                     .foregroundColor(Theme.textSecondary)
                 Spacer()
-                Text("\(acceptedHandles.count) حساب")
+                Text("\(acceptedHandles.count) \(platform == .facebook ? "صفحة" : "حساب")")
                     .font(.system(size: 10.5, weight: .semibold, design: .rounded))
                     .foregroundColor(Theme.cyan)
             }
             FlowLayout(spacing: 6) {
                 ForEach(acceptedHandles.prefix(24), id: \.self) { handle in
-                    Text("@" + handle)
+                    Text(platform == .facebook ? handle : "@" + handle)
                         .font(.system(size: 10.5, weight: .medium))
                         .foregroundColor(Theme.textSecondary)
                         .padding(.horizontal, 8)
@@ -260,8 +278,10 @@ struct AddAccountsView: View {
                 Text(store.useServer
                      ? "الخطوة التالية: اربط كل حساب بتسجيل الدخول إلى TikTok مرة واحدة."
                      : (readyCount > 0
-                        ? "تم جلب المنشورات ومشاهدات آخر ٢٤ ساعة والتقييم الأسبوعي مباشرة من TikTok."
-                        : "أُضيفت الحسابات وستُحدَّث أرقامها تلقائياً عند توفر اتصال TikTok."))
+                        ? (platform == .facebook
+                           ? "تم جلب المنشورات ومشاهدات الفيديو المتاحة علناً مباشرة من فيسبوك."
+                           : "تم جلب المنشورات ومشاهدات آخر ٢٤ ساعة والتقييم الأسبوعي مباشرة من TikTok.")
+                        : "أُضيفت الحسابات وستُحدَّث أرقامها تلقائياً عند توفر اتصال \(platformName)."))
                     .font(.system(size: 11))
                     .foregroundColor(Theme.textSecondary)
                     .lineSpacing(3)
@@ -275,7 +295,7 @@ struct AddAccountsView: View {
                                     .font(.system(size: 11.5, weight: .semibold))
                                     .foregroundColor(Theme.text)
                                     .lineLimit(1)
-                                Text("@" + account.handle)
+                                Text(account.isFacebook ? account.handle : "@" + account.handle)
                                     .font(.system(size: 9.5))
                                     .foregroundColor(Theme.textTertiary)
                             }
@@ -320,7 +340,7 @@ struct AddAccountsView: View {
                         .background(RoundedRectangle(cornerRadius: 11).fill(Theme.bgSoft))
                     }
                     if result.created.count > 6 {
-                        Text("+\(result.created.count - 6) حساباً آخر تمت إضافته")
+                        Text("+\(result.created.count - 6) \(platform == .facebook ? "صفحة" : "حساباً") آخر تمت إضافته")
                             .font(.system(size: 10.5, weight: .semibold))
                             .foregroundColor(Theme.textTertiary)
                             .frame(maxWidth: .infinity, alignment: .center)
@@ -330,7 +350,7 @@ struct AddAccountsView: View {
             }
 
             if let skipped = result.skipped, !skipped.isEmpty {
-                Label("\(skipped.count) حساب مضاف مسبقاً", systemImage: "arrow.triangle.2.circlepath")
+                Label("\(skipped.count) \(platform == .facebook ? "صفحة مضافة" : "حساب مضاف") مسبقاً", systemImage: "arrow.triangle.2.circlepath")
                     .font(.system(size: 10.5))
                     .foregroundColor(Theme.textTertiary)
             }
@@ -385,14 +405,15 @@ struct AddAccountsView: View {
 
     private var helpCard: some View {
         VStack(alignment: .leading, spacing: 9) {
-            Label(store.useServer ? "كيف يعمل الربط؟" : "كيف تُحسب الإحصاءات؟", systemImage: "questionmark.circle")
+            Label(
+                platform == .facebook
+                    ? "كيف تُحسب إحصاءات فيسبوك؟"
+                    : (store.useServer ? "كيف يعمل الربط؟" : "كيف تُحسب الإحصاءات؟"),
+                systemImage: "questionmark.circle"
+            )
                 .font(.system(size: 11.5, weight: .bold))
                 .foregroundColor(Theme.textSecondary)
-            Text(store.useServer
-                 ? "نسجّل دخول كل حساب مرة واحدة عبر TikTok Display API الرسمي، ثم يبقى مربوطاً ويُحدّث نفسه تلقائياً. لا نطلب كلمة المرور."
-                 : (AppVariant.readsEveryWeeklyPost
-                    ? "نقرأ الصفحة العامة لكل حساب على TikTok: المتابعون والإعجابات وعدد المنشورات بدقة 100%، ثم نفتح صفحة الحساب لقراءة كل منشورات آخر ٧ أيام — وليس آخر ١٠ فقط — ونحسب التقييم الأسبوعي من مجموع مشاهداتها. لا حاجة لتسجيل الدخول أو VPN."
-                    : "نقرأ الصفحة العامة لكل حساب على TikTok: المتابعون والإعجابات وعدد المنشورات بدقة 100%، ثم أحدث المنشورات لحساب مشاهدات ٢٤ ساعة والتقييم الأسبوعي. مشاهدات الفيديو العامة يقرّبها TikTok وتظهر بعلامة ≈. لا حاجة لتسجيل الدخول أو VPN."))
+            Text(helpText)
                 .font(.system(size: 11))
                 .foregroundColor(Theme.textTertiary)
                 .lineSpacing(4)
@@ -401,13 +422,25 @@ struct AddAccountsView: View {
         .card(padding: 15)
     }
 
+    private var helpText: String {
+        if platform == .facebook {
+            return "نقرأ الصفحة العامة لكل صفحة فيسبوك دون تسجيل دخول: الاسم والمتابعون والمنشورات، ومشاهدات الفيديو المتاحة علناً. يعرض فيسبوك للزائر أحدث ٢٠ منشوراً تقريباً، لذلك تُعلَّم النتيجة جزئية عند الحاجة. المنشورات النصية والصور لا تكشف مشاهدات عامة، فتُحتسب بلا مشاهدات."
+        }
+        return store.useServer
+            ? "نسجّل دخول كل حساب مرة واحدة عبر TikTok Display API الرسمي، ثم يبقى مربوطاً ويُحدّث نفسه تلقائياً. لا نطلب كلمة المرور."
+            : (AppVariant.readsEveryWeeklyPost
+               ? "نقرأ الصفحة العامة لكل حساب على TikTok: المتابعون والإعجابات وعدد المنشورات بدقة 100%، ثم نفتح صفحة الحساب لقراءة كل منشورات آخر ٧ أيام — وليس آخر ١٠ فقط — ونحسب التقييم الأسبوعي من مجموع مشاهداتها. لا حاجة لتسجيل الدخول أو VPN."
+               : "نقرأ الصفحة العامة لكل حساب على TikTok: المتابعون والإعجابات وعدد المنشورات بدقة 100%، ثم أحدث المنشورات لحساب مشاهدات ٢٤ ساعة والتقييم الأسبوعي. مشاهدات الفيديو العامة يقرّبها TikTok وتظهر بعلامة ≈. لا حاجة لتسجيل الدخول أو VPN.")
+    }
+
     private func submit() async {
         guard !acceptedHandles.isEmpty else { return }
         let keepText = overflowCount > 0
         editorFocused = false
         isSubmitting = true
         errorText = nil
-        let response = await store.add(links: acceptedHandles.map { "@\($0)" })
+        let links = acceptedHandles.map { platform == .facebook ? $0 : "@\($0)" }
+        let response = await store.add(links: links, platform: platform)
         isSubmitting = false
         if let response {
             withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
@@ -419,7 +452,10 @@ struct AddAccountsView: View {
         }
     }
 
-    static func handle(from raw: String) -> String? {
+    static func handle(from raw: String, platform: AccountPlatform = .tiktok) -> String? {
+        if platform == .facebook {
+            return FacebookPageParser.reference(from: raw)?.handle
+        }
         var value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty else { return nil }
         value = value.replacingOccurrences(of: "https://", with: "")

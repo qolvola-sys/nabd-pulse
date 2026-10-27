@@ -144,8 +144,6 @@ struct ReportRow: Identifiable, Codable, Hashable {
     var platform: ReportPlatform
     /// نص حر مثل «تيك توك» أو «فيسبوك ت» كما في نموذج Excel.
     var program: String
-    /// نص حر لأن بعض الصفحات تُكتب «حسب التبليغ».
-    var required: String
     var posts: Int?
     var views: Int64?
     var notes: String
@@ -159,7 +157,6 @@ struct ReportRow: Identifiable, Codable, Hashable {
         pageName: String,
         platform: ReportPlatform = .tiktok,
         program: String? = nil,
-        required: String = "8",
         posts: Int? = nil,
         views: Int64? = nil,
         notes: String = "",
@@ -172,7 +169,6 @@ struct ReportRow: Identifiable, Codable, Hashable {
         self.pageName = pageName
         self.platform = platform
         self.program = program ?? platform.defaultProgram
-        self.required = required
         self.posts = posts
         self.views = views
         self.notes = notes
@@ -331,8 +327,9 @@ struct ReportDocument: Identifiable, Codable, Hashable {
         rows.compactMap(\.views).reduce(Int64(0), +)
     }
 
-    var tiktokRows: [ReportRow] {
-        rows.filter { $0.platform == .tiktok }
+    /// الصفوف التي قُرئت آلياً (TikTok أو فيسبوك) ولا تشمل الصفحات اليدوية.
+    var trackedRows: [ReportRow] {
+        rows.filter { !$0.isManual && $0.quality != .manual }
     }
 
     var exactRows: [ReportRow] {
@@ -352,30 +349,27 @@ struct ReportDocument: Identifiable, Codable, Hashable {
     }
 
     var isFullyExact: Bool {
-        !tiktokRows.isEmpty && tiktokRows.allSatisfy { $0.quality == .exact }
+        !trackedRows.isEmpty && trackedRows.allSatisfy { $0.quality == .exact }
     }
 
     var qualitySummary: String {
-        if tiktokRows.isEmpty {
-            return "لا توجد صفحات TikTok"
+        if trackedRows.isEmpty {
+            if manualRows.isEmpty { return "لا توجد صفحات في التقرير" }
+            return "\(ReportNumber.full(Int64(manualRows.count))) صفحة إدخال يدوي"
         }
         if isFullyExact {
             if manualRows.isEmpty {
-                return "كل أرقام TikTok دقيقة ١٠٠٪"
+                return "كل الأرقام المحمّلة دقيقة ١٠٠٪"
             }
-            return "كل أرقام TikTok دقيقة ١٠٠٪ · \(ReportNumber.full(Int64(manualRows.count))) صفحة إدخال يدوي"
+            return "كل الأرقام المحمّلة دقيقة ١٠٠٪ · \(ReportNumber.full(Int64(manualRows.count))) صفحة إدخال يدوي"
         }
         if !incompleteRows.isEmpty {
             return "\(ReportNumber.full(Int64(incompleteRows.count))) صفحة تحتاج إعادة قراءة"
         }
         if !approximateRows.isEmpty {
-            return "\(ReportNumber.full(Int64(approximateRows.count))) صفحة بمشاهدات مقرّبة"
+            return "\(ReportNumber.full(Int64(approximateRows.count))) صفحة بمشاهدات عامة غير مكتملة"
         }
-        let manualTikTok = tiktokRows.filter { $0.quality == .manual || $0.isManual }.count
-        if manualTikTok > 0 {
-            return "\(ReportNumber.full(Int64(manualTikTok))) صفحة TikTok معدّلة يدوياً"
-        }
-        return "لا توجد صفحات TikTok"
+        return "لا توجد صفحات محمّلة"
     }
 
     var periodText: String {
@@ -414,7 +408,6 @@ struct ReportManualTemplate: Identifiable, Codable, Hashable {
     var pageName: String
     var platform: ReportPlatform
     var program: String
-    var required: String
     var notes: String
     var url: String
 
@@ -423,7 +416,6 @@ struct ReportManualTemplate: Identifiable, Codable, Hashable {
         pageName: String = "صفحة جديدة",
         platform: ReportPlatform = .facebook,
         program: String? = nil,
-        required: String = "حسب التبليغ",
         notes: String = "",
         url: String = ""
     ) {
@@ -431,7 +423,6 @@ struct ReportManualTemplate: Identifiable, Codable, Hashable {
         self.pageName = pageName
         self.platform = platform
         self.program = program ?? platform.defaultProgram
-        self.required = required
         self.notes = notes
         self.url = url
     }

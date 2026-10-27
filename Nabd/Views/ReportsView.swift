@@ -323,7 +323,7 @@ struct ReportsView: View {
                     .lineLimit(1)
             }
 
-            Text("يبقى TikTok مفتوحاً في الخلفية أثناء القراءة. لا تُغلق التطبيق حتى ينتهي التوليد.")
+            Text("ابقَ داخل التطبيق أثناء القراءة. لا تُغلق التطبيق حتى ينتهي التوليد.")
                 .font(.system(size: 9.5))
                 .foregroundColor(Theme.textTertiary)
         }
@@ -364,7 +364,7 @@ struct ReportsView: View {
                     .foregroundColor(Theme.textTertiary)
             }
 
-            Text("iOS لا يسمح بقراءة TikTok في الخلفية. إذا كان التطبيق مغلقاً عند ١:٠٠ ص، يُنشأ التقرير عند أول فتح بعده.")
+            Text("iOS لا يسمح بقراءة الصفحات في الخلفية. إذا كان التطبيق مغلقاً عند الموعد، يُنشأ التقرير عند أول فتح بعده.")
                 .font(.system(size: 9.5))
                 .foregroundColor(Theme.textTertiary)
                 .lineSpacing(3)
@@ -683,7 +683,7 @@ struct ReportsView: View {
                 Image(systemName: "checkmark.seal.fill")
                     .font(.system(size: 11, weight: .bold))
                     .foregroundColor(Theme.green)
-                Text("كل مشاهدات TikTok تُقرأ من statsV2 وقت التوليد. أي قراءة ناقصة أو مقرّبة تظهر بعلامة واضحة ولا تُقدَّم كرقم دقيق.")
+                Text("تُقرأ حسابات TikTok من statsV2 وصفحات فيسبوك من صفحاتها العامة وقت التوليد. أي قراءة ناقصة أو مقرّبة تظهر بعلامة واضحة ولا تُقدَّم كرقم دقيق.")
                     .font(.system(size: 9.5))
                     .foregroundColor(Theme.textTertiary)
                     .lineSpacing(3)

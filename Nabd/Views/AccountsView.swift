@@ -28,6 +28,10 @@ enum AccountSort: String, CaseIterable, Identifiable {
 
 struct AccountsView: View {
     @EnvironmentObject private var store: AppStore
+    @Environment(\.dismiss) private var dismiss
+
+    /// الصفحة تُعرض افتراضياً لحسابات TikTok، ويمكن فتحها مستقلة لفيسبوك.
+    var platform: AccountPlatform = .tiktok
 
     @State private var search = ""
     @State private var sort: AccountSort = {
@@ -45,9 +49,17 @@ struct AccountsView: View {
     @State private var groupEditor: GroupEditorRequest?
     #endif
 
+    private var platformAccounts: [Account] {
+        store.accounts.filter { $0.platform == platform }
+    }
+
+    private var platformSummary: Summary {
+        Summary.make(from: platformAccounts)
+    }
+
     private var filtered: [Account] {
         let query = search.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        var list = store.accounts
+        var list = platformAccounts
         if !query.isEmpty {
             list = list.filter {
                 $0.handle.lowercased().contains(query) ||
@@ -80,7 +92,7 @@ struct AccountsView: View {
                 SearchField(text: $search)
                 sortChips
 
-                if store.isLoading && store.accounts.isEmpty {
+                if store.isLoading && platformAccounts.isEmpty {
                     loadingRows
                 } else if filtered.isEmpty {
                     emptyState
@@ -115,11 +127,11 @@ struct AccountsView: View {
             if flag == "--sheet=add" {
                 showAdd = true
             } else if flag == "--sheet=detail", selected == nil {
-                selected = store.topAccounts.first
+                selected = store.topAccounts.first { $0.platform == platform }
             }
         }
         .sheet(isPresented: $showAdd) {
-            AddAccountsView()
+            AddAccountsView(platform: platform)
                 .environmentObject(store)
         }
         .sheet(item: $selected) { account in
@@ -143,7 +155,7 @@ struct AccountsView: View {
         }
         #endif
         .confirmationDialog(
-            "إزالة @\(pendingDelete?.handle ?? "")؟",
+            "إزالة \(platform == .facebook ? "" : "@")\(pendingDelete?.handle ?? "")؟",
             isPresented: Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }),
             titleVisibility: .visible
         ) {
@@ -155,12 +167,12 @@ struct AccountsView: View {
             }
             Button("إلغاء", role: .cancel) { pendingDelete = nil }
         } message: {
-            Text("ستُحذف بياناته من \(AppVariant.name) فقط، ولن يتأثر حساب TikTok.")
+            Text("ستُحذف بياناته من \(AppVariant.name) فقط، ولن يتأثر حساب \(platform.title).")
         }
     }
 
     private var maxViews: Int64 {
-        max(store.accounts.map { $0.views24h }.max() ?? 1, 1)
+        max(platformAccounts.map { $0.views24h }.max() ?? 1, 1)
     }
 
     private func accountCard(_ account: Account) -> some View {
@@ -209,9 +221,9 @@ struct AccountsView: View {
                     Label("نسخ الرابط", systemImage: "link")
                 }
                 Button {
-                    openInTikTok(account)
+                    openAccountLink(account)
                 } label: {
-                    Label("فتح في TikTok", systemImage: "arrow.up.right.square")
+                    Label("فتح في \(platform.title)", systemImage: "arrow.up.right.square")
                 }
                 Divider()
                 Button(role: .destructive) {
@@ -276,6 +288,8 @@ struct AccountsView: View {
                         id: group.id,
                         name: group.name,
                         accounts: members,
+                        // السعة مشتركة بين المنصتين، لذا نعرض العدد الفعلي
+                        // لكل حسابات المجموعة وليس حسابات المنصة وحدها.
                         totalCount: store.accounts(in: group.id).count,
                         index: index,
                         isManaged: true
@@ -436,7 +450,7 @@ struct AccountsView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "tray")
                         .font(.system(size: 10, weight: .semibold))
-                    Text(isSearching ? "لا نتائج في هذه المجموعة" : "لا حسابات في هذه المجموعة بعد")
+                    Text(isSearching ? "لا نتائج في هذه المجموعة" : "لا حسابات \(platform.title) في هذه المجموعة بعد")
                         .font(.system(size: 9.5))
                     Spacer(minLength: 0)
                 }
@@ -545,12 +559,18 @@ struct AccountsView: View {
     }
 
     private func reorderBar(_ account: Account) -> some View {
-        let info = store.groupInfo(for: account.id)
-        let index = info?.index ?? (store.accounts.firstIndex(where: { $0.id == account.id }) ?? 0)
-        let count = max(info?.total ?? store.accounts.count, 1)
+        let groupID = store.groupID(for: account.id)
+        let members = groupID.map { groupID in
+            platformAccounts.filter { store.groupID(for: $0.id) == groupID }
+        } ?? platformAccounts
+        let index = members.firstIndex(where: { $0.id == account.id }) ?? 0
+        let count = max(members.count, 1)
+        let groupName = groupID.flatMap { groupID in
+            store.groups.first(where: { $0.id == groupID })?.name
+        }
         let positionText: String
-        if let info {
-            positionText = "\(info.group.name) · الموضع \(Num.full(Int64(info.index + 1))) من \(Num.full(Int64(info.total)))"
+        if let groupName {
+            positionText = "\(groupName) · الموضع \(Num.full(Int64(index + 1))) من \(Num.full(Int64(count)))"
         } else {
             positionText = "الموضع \(Num.full(Int64(index + 1))) من \(Num.full(Int64(count)))"
         }
@@ -620,49 +640,58 @@ struct AccountsView: View {
     #endif
 
     private var posts24hText: String {
-        store.summary.dailyComplete
-            ? Num.full(Int64(store.summary.posts24h))
-            : Num.atLeast(Int64(store.summary.posts24h))
+        platformSummary.dailyComplete
+            ? Num.full(Int64(platformSummary.posts24h))
+            : Num.atLeast(Int64(platformSummary.posts24h))
     }
 
     private var views24hText: String {
         Num.maybeApprox(
-            store.summary.views24h,
-            exact: store.summary.dailyComplete && store.summary.dailyViewsExact
+            platformSummary.views24h,
+            exact: platformSummary.dailyComplete && platformSummary.dailyViewsExact
         )
     }
 
     private var weeklyViewsText: String {
         Num.maybeApprox(
-            store.summary.weeklyViews,
-            exact: store.summary.weeklyComplete && store.summary.weeklyViewsExact
+            platformSummary.weeklyViews,
+            exact: platformSummary.weeklyComplete && platformSummary.weeklyViewsExact
         )
     }
 
     private var weeklyScoreText: String {
-        let exact = store.summary.weeklyComplete && store.summary.weeklyViewsExact
-        return Num.score(store.summary.weeklyScore, exact: exact) + "%"
+        let exact = platformSummary.weeklyComplete && platformSummary.weeklyViewsExact
+        return Num.score(platformSummary.weeklyScore, exact: exact) + "%"
     }
 
     private var header: some View {
-        HStack(alignment: .center) {
+        HStack(alignment: .center, spacing: 10) {
             VStack(alignment: .leading, spacing: 3) {
-                Text("الحسابات")
-                    .font(.system(size: 26, weight: .heavy, design: .rounded))
-                    .foregroundColor(Theme.text)
+                HStack(spacing: 6) {
+                    if platform == .facebook {
+                        Image(systemName: "globe")
+                            .font(.system(size: 19, weight: .bold))
+                            .foregroundColor(Theme.cyan)
+                    }
+                    Text(platform == .facebook ? "حسابات فيسبوك" : "الحسابات")
+                        .font(.system(size: platform == .facebook ? 22 : 26, weight: .heavy, design: .rounded))
+                        .foregroundColor(Theme.text)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                }
                 #if MUTABAA
                 if store.spacesEnabled {
-                    Text("\(store.accounts.count) حساباً في مساحة «\(store.activeSpaceName)»")
+                    Text("\(platformAccounts.count) \(platform == .facebook ? "صفحة" : "حساباً") في مساحة «\(store.activeSpaceName)»")
                         .font(.system(size: 11.5))
                         .foregroundColor(Theme.textSecondary)
                         .lineLimit(1)
                 } else {
-                    Text("\(store.accounts.count) حساباً في \(AppVariant.name)")
+                    Text("\(platformAccounts.count) \(platform == .facebook ? "صفحة" : "حساباً") في \(AppVariant.name)")
                         .font(.system(size: 11.5))
                         .foregroundColor(Theme.textSecondary)
                 }
                 #else
-                Text("\(store.accounts.count) حساباً في \(AppVariant.name)")
+                Text("\(platformAccounts.count) \(platform == .facebook ? "صفحة" : "حساباً") في \(AppVariant.name)")
                     .font(.system(size: 11.5))
                     .foregroundColor(Theme.textSecondary)
                 #endif
@@ -685,6 +714,44 @@ struct AccountsView: View {
                 .shadow(color: Theme.cyan.opacity(0.28), radius: 12, y: 6)
             }
             .buttonStyle(PressableStyle())
+
+            if platform == .facebook {
+                Button {
+                    store.haptic(.impact)
+                    Task { await store.syncAll() }
+                } label: {
+                    Group {
+                        if store.isSyncing {
+                            ProgressView()
+                                .tint(Theme.cyan)
+                                .scaleEffect(0.75)
+                        } else {
+                            Image(systemName: "arrow.triangle.2.circlepath")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundColor(Theme.textSecondary)
+                        }
+                    }
+                    .frame(width: 34, height: 34)
+                    .background(Circle().fill(Theme.surfaceRaised))
+                    .overlay(Circle().strokeBorder(Theme.borderSoft, lineWidth: 1))
+                }
+                .buttonStyle(PressableStyle())
+                .disabled(store.isSyncing)
+                .accessibilityLabel("مزامنة صفحات فيسبوك")
+
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(Theme.textSecondary)
+                        .frame(width: 34, height: 34)
+                        .background(Circle().fill(Theme.surfaceRaised))
+                        .overlay(Circle().strokeBorder(Theme.borderSoft, lineWidth: 1))
+                }
+                .buttonStyle(PressableStyle())
+                .accessibilityLabel("إغلاق صفحة فيسبوك")
+            }
         }
     }
 
@@ -696,7 +763,7 @@ struct AccountsView: View {
             Rectangle().fill(Theme.borderSoft).frame(width: 1, height: 24)
             stripItem(title: "مشاهدات ٧ أيام", value: weeklyViewsText, tint: Theme.cyan)
             Rectangle().fill(Theme.borderSoft).frame(width: 1, height: 24)
-            stripItem(title: "تقييم المنصة", value: weeklyScoreText, tint: WeeklyScoreStyle.color(for: store.summary.weeklyScore))
+            stripItem(title: "تقييم المنصة", value: weeklyScoreText, tint: WeeklyScoreStyle.color(for: platformSummary.weeklyScore))
         }
         .padding(.vertical, 12)
         .background(
@@ -762,6 +829,14 @@ struct AccountsView: View {
     }
 
     private var emptyMessage: String {
+        if platform == .facebook {
+            #if MUTABAA
+            if store.spacesEnabled {
+                return "الصق روابط صفحات فيسبوك العامة (حتى ٥٠٠ رابط دفعة واحدة) وستُضاف إلى مساحة «\(store.activeSpaceName)» مع منشوراتها ومشاهدات فيديوها."
+            }
+            #endif
+            return "الصق روابط صفحات فيسبوك العامة (حتى ٥٠٠ رابط دفعة واحدة) وسنرتّب لك المنشورات ومشاهدات الفيديو."
+        }
         #if MUTABAA
         if store.spacesEnabled {
             return "الصق روابط حسابات TikTok (حتى ٥٠٠ رابط دفعة واحدة) وستُضاف إلى مساحة «\(store.activeSpaceName)» مع إحصاءاتها."
@@ -784,8 +859,8 @@ struct AccountsView: View {
                 )
             } else {
                 EmptyStateView(
-                    icon: "person.badge.plus",
-                    title: "ابدأ بإضافة حساباتك",
+                    icon: platform == .facebook ? "globe" : "person.badge.plus",
+                    title: platform == .facebook ? "ابدأ بإضافة صفحات فيسبوك" : "ابدأ بإضافة حساباتك",
                     message: emptyMessage,
                     actionTitle: "إضافة روابط",
                     action: { showAdd = true }
@@ -797,11 +872,12 @@ struct AccountsView: View {
 
     private func copyLink(_ account: Account) {
         UIPasteboard.general.string = account.url
-        store.showToast("تم نسخ رابط @\(account.handle)", .success)
+        let label = account.platform == .facebook ? account.handle : "@\(account.handle)"
+        store.showToast("تم نسخ رابط \(label)", .success)
         store.haptic(.selection)
     }
 
-    private func openInTikTok(_ account: Account) {
+    private func openAccountLink(_ account: Account) {
         guard let url = URL(string: account.url) else { return }
         UIApplication.shared.open(url)
     }
@@ -850,10 +926,15 @@ struct AccountRow: View {
                                 .foregroundColor(Theme.cyan)
                         }
                     }
-                    Text("@" + account.handle)
-                        .font(.system(size: 11))
-                        .foregroundColor(Theme.textTertiary)
-                        .lineLimit(1)
+                    HStack(spacing: 4) {
+                        Image(systemName: account.platform.icon)
+                            .font(.system(size: 8.5, weight: .bold))
+                            .foregroundColor(account.isFacebook ? Theme.cyan : Theme.pink)
+                        Text(account.isFacebook ? account.handle : "@" + account.handle)
+                            .font(.system(size: 11))
+                            .foregroundColor(Theme.textTertiary)
+                            .lineLimit(1)
+                    }
                 }
 
                 Spacer(minLength: 6)

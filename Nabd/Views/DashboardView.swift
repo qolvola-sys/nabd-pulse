@@ -11,6 +11,35 @@ struct DashboardView: View {
 
     private var hasViews: Bool { store.summary.loadedVideos > 0 && store.summary.views > 0 }
 
+    private var hasTikTokAccounts: Bool {
+        store.accounts.contains { $0.platform == .tiktok }
+    }
+
+    private var hasFacebookAccounts: Bool {
+        store.accounts.contains { $0.platform == .facebook }
+    }
+
+    private var platformsLabel: String {
+        if hasTikTokAccounts && hasFacebookAccounts { return "TikTok + فيسبوك" }
+        if hasFacebookAccounts { return "فيسبوك" }
+        return "TikTok"
+    }
+
+    /// جملة الدقة حسب المنصات الموجودة في المساحة.
+    private var accuracySentence: String {
+        if hasTikTokAccounts && hasFacebookAccounts {
+            return "مشاهدات TikTok مقرّبة، ومشاهدات فيسبوك متاحة للفيديو فقط."
+        }
+        if hasFacebookAccounts {
+            return "مشاهدات فيسبوك متاحة للفيديو فقط."
+        }
+        return "مشاهدات الفيديو العامة يقرّبها TikTok."
+    }
+
+    private var viewsAccuracyNote: String {
+        "≈ " + accuracySentence
+    }
+
     private var hasVideoEngagementData: Bool {
         store.summary.likes + store.summary.comments + store.summary.shares > 0
     }
@@ -41,12 +70,14 @@ struct DashboardView: View {
             return "كل منشورات آخر ٧ أيام محمّلة، والنتيجة دقيقة 100%."
         }
         if !store.summary.weeklyComplete && !store.summary.weeklyViewsExact {
-            return "≈ النتيجة من المنشورات المحمّلة، ومشاهدات TikTok العامة مقرّبة."
+            return "≈ النتيجة من المنشورات المحمّلة؛ " + accuracySentence
         }
         if !store.summary.weeklyComplete {
-            return AppVariant.incompleteWeeklyNote
+            return hasFacebookAccounts
+                ? "≈ بعض منشورات آخر ٧ أيام لم تُقرأ بعد؛ تُحتسب المنشورات المحمّلة."
+                : AppVariant.incompleteWeeklyNote
         }
-        return "≈ مشاهدات الفيديو العامة يقرّبها TikTok؛ النتيجة تقريبية."
+        return viewsAccuracyNote
     }
 
     private var posts24hText: String {
@@ -284,7 +315,7 @@ struct DashboardView: View {
                             .minimumScaleFactor(0.7)
                     }
                     Spacer()
-                    Text("TikTok")
+                    Text(platformsLabel)
                         .font(.system(size: 10, weight: .bold, design: .rounded))
                         .foregroundColor(Theme.text.opacity(0.7))
                         .padding(.horizontal, 9)
@@ -307,7 +338,7 @@ struct DashboardView: View {
                     .padding(.top, 2)
 
                 if hasViews && !store.summary.viewsExact {
-                    Text("≈ مشاهدات الفيديو العامة يقرّبها TikTok")
+                    Text(viewsAccuracyNote)
                         .font(.system(size: 9.5, weight: .medium))
                         .foregroundColor(Theme.gold.opacity(0.9))
                         .padding(.top, 3)
@@ -419,7 +450,7 @@ struct DashboardView: View {
             }
 
             if store.isLoading && store.accounts.isEmpty {
-                Text("جارٍ جلب الأرقام من TikTok…")
+                Text("جارٍ جلب الأرقام…")
                     .font(.system(size: 11))
                     .foregroundColor(Theme.textTertiary)
                     .frame(maxWidth: .infinity, alignment: .center)
@@ -430,7 +461,7 @@ struct DashboardView: View {
                         .font(.system(size: 12))
                         .foregroundColor(Theme.textTertiary)
                     Text(store.accounts.isEmpty
-                         ? "أضف رابط حساب TikTok لعرض إحصاءات آخر ٢٤ ساعة."
+                         ? "أضف رابط حساب لعرض إحصاءات آخر ٢٤ ساعة."
                          : "لا توجد منشورات جديدة خلال آخر ٢٤ ساعة.")
                         .font(.system(size: 11))
                         .foregroundColor(Theme.textSecondary)
@@ -447,11 +478,16 @@ struct DashboardView: View {
                             HStack(spacing: 10) {
                                 AvatarView(account: account, size: 32, showVerified: false)
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text(account.displayName)
-                                        .font(.system(size: 12, weight: .semibold))
-                                        .foregroundColor(Theme.text)
-                                        .lineLimit(1)
-                                    Text("@" + account.handle)
+                                    HStack(spacing: 4) {
+                                        Text(account.displayName)
+                                            .font(.system(size: 12, weight: .semibold))
+                                            .foregroundColor(Theme.text)
+                                            .lineLimit(1)
+                                        Image(systemName: account.platform.icon)
+                                            .font(.system(size: 7.5, weight: .bold))
+                                            .foregroundColor(account.isFacebook ? Theme.cyan : Theme.pink)
+                                    }
+                                    Text(account.isFacebook ? account.handle : "@" + account.handle)
                                         .font(.system(size: 9.5))
                                         .foregroundColor(Theme.textTertiary)
                                         .lineLimit(1)
@@ -481,8 +517,8 @@ struct DashboardView: View {
             }
             if !store.summary.dailyComplete || !store.summary.dailyViewsExact {
                 Text(store.summary.dailyComplete
-                     ? "≈ مشاهدات الفيديو العامة يقرّبها TikTok."
-                     : "الحسابات التي نشرت أكثر من ١٠ منشورات في ٢٤ ساعة تظهر من أحدث ١٠ فقط.")
+                     ? viewsAccuracyNote
+                     : "الحسابات التي لم تُقرأ كل منشوراتها بعد تظهر من المنشورات المحمّلة.")
                     .font(.system(size: 9.5))
                     .foregroundColor(Theme.textTertiary)
                     .multilineTextAlignment(.center)
@@ -769,6 +805,9 @@ struct DashboardView: View {
                                             .font(.system(size: 12.5, weight: .semibold))
                                             .foregroundColor(Theme.text)
                                             .lineLimit(1)
+                                        Image(systemName: account.platform.icon)
+                                            .font(.system(size: 8, weight: .bold))
+                                            .foregroundColor(account.isFacebook ? Theme.cyan : Theme.pink)
                                         if account.isVerified {
                                             Image(systemName: "checkmark.seal.fill")
                                                 .font(.system(size: 9))
@@ -789,7 +828,7 @@ struct DashboardView: View {
                                         .foregroundColor(Theme.text)
                                         .lineLimit(1)
                                         .minimumScaleFactor(0.6)
-                                    Text("\(Num.full(Int64(account.posts))) منشور")
+                                    Text("\(Num.maybeApprox(Int64(account.posts), exact: account.postsCountExact)) منشور")
                                         .font(.system(size: 9.5))
                                         .foregroundColor(Theme.textTertiary)
                                 }
@@ -914,7 +953,7 @@ struct DashboardView: View {
                 Image(systemName: "calendar.badge.clock")
                     .font(.system(size: 9.5, weight: .semibold))
                     .foregroundColor(Theme.violet)
-                Text("المشاهدات هي مجموع مشاهدات المنشورات المنشورة خلال آخر ٧ أيام. الأرقام التي تظهر بدون ≈ دقيقة 100%، والحسابات التي لم تُقرأ كل منشوراتها تظهر بعلامة تقريب.")
+                Text("المشاهدات هي مجموع مشاهدات المنشورات المنشورة خلال آخر ٧ أيام. الأرقام التي تظهر بدون ≈ دقيقة 100%، والحسابات التي لم تُقرأ كل منشوراتها تظهر بعلامة تقريب." + (hasFacebookAccounts ? " مشاهدات فيسبوك متاحة للفيديو فقط." : ""))
                     .font(.system(size: 9.5))
                     .foregroundColor(Theme.textTertiary)
                     .lineSpacing(3)
@@ -939,6 +978,9 @@ struct DashboardView: View {
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundColor(Theme.text)
                             .lineLimit(1)
+                        Image(systemName: account.platform.icon)
+                            .font(.system(size: 7.5, weight: .bold))
+                            .foregroundColor(account.isFacebook ? Theme.cyan : Theme.pink)
                         if account.isVerified {
                             Image(systemName: "checkmark.seal.fill")
                                 .font(.system(size: 8.5))
@@ -952,7 +994,9 @@ struct DashboardView: View {
                              : "لا مشاهدات هذا الأسبوع")
                         if account.weeklyViews > 0 {
                             Text("·")
-                            Text("\(Num.full(Int64(account.posts7d))) منشور")
+                            Text(account.weeklyComplete
+                                 ? "\(Num.full(Int64(account.posts7d))) منشور"
+                                 : "\(Num.atLeast(Int64(account.posts7d))) منشور")
                         }
                     }
                     .font(.system(size: 9.5))
@@ -1013,8 +1057,8 @@ struct DashboardView: View {
 
             if store.summary.accounts > 0 {
                 Text(AppVariant.readsEveryWeeklyPost
-                     ? "التقييم الأسبوعي في «المتابعة» يُحسب من كل منشورات آخر ٧ أيام لكل حساب. الأرقام التي تظهر بدون ≈ دقيقة 100%: كل ١٠٬٠٠٠ مشاهدة = نقطة، و١٬٠٠٠٬٠٠٠ = 100%."
-                     : "بيانات TikTok التي تظهر بدون ≈ دقيقة 100%. مشاهدات الفيديو العامة يقرّبها TikTok وتظهر بعلامة ≈. التقييم من 100: كل ١٠٬٠٠٠ مشاهدة = نقطة، و١٬٠٠٠٬٠٠٠ = 100%.")
+                     ? "التقييم الأسبوعي في «المتابعة» يُحسب من كل منشورات آخر ٧ أيام لكل حساب. الأرقام التي تظهر بدون ≈ دقيقة 100%: كل ١٠٬٠٠٠ مشاهدة = نقطة، و١٬٠٠٠٬٠٠٠ = 100%. " + accuracySentence
+                     : "بيانات TikTok التي تظهر بدون ≈ دقيقة 100%. " + accuracySentence + " التقييم من 100: كل ١٠٬٠٠٠ مشاهدة = نقطة، و١٬٠٠٠٬٠٠٠ = 100%.")
                     .font(.system(size: 9.5))
                     .foregroundColor(Theme.textTertiary)
                     .multilineTextAlignment(.center)

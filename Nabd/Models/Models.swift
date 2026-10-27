@@ -67,9 +67,44 @@ extension KeyedDecodingContainer {
 
 // MARK: - الحساب
 
+enum AccountPlatform: String, Codable, CaseIterable, Identifiable, Hashable {
+    case tiktok
+    case facebook
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .tiktok: return "TikTok"
+        case .facebook: return "فيسبوك"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .tiktok: return "play.rectangle.fill"
+        case .facebook: return "globe"
+        }
+    }
+
+    var defaultProgram: String {
+        switch self {
+        case .tiktok: return "تيك توك"
+        case .facebook: return "فيسبوك"
+        }
+    }
+
+    var profileURLPrefix: String {
+        switch self {
+        case .tiktok: return "https://www.tiktok.com/@"
+        case .facebook: return "https://www.facebook.com/"
+        }
+    }
+}
+
 struct Account: Identifiable, Codable, Hashable {
     var id: String
-    var platform: String
+    var platform: AccountPlatform
     var handle: String
     var url: String
     var displayName: String
@@ -79,6 +114,9 @@ struct Account: Identifiable, Codable, Hashable {
     var following: Int64
     var likes: Int64
     var posts: Int
+    /// هل عدد المنشورات الكلي معلوم؟ فيسبوك لا يعرض إجمالي منشورات الصفحة،
+    /// لذلك نعرض عدد المنشورات المحمّلة مع علامة أنه ليس إجمالياً.
+    var postsCountExact: Bool
     var views: Int64
     var videoLikes: Int64
     var comments: Int64
@@ -114,6 +152,13 @@ struct Account: Identifiable, Codable, Hashable {
     var avgViewsPerPost: Int64 {
         avgViews > 0 ? avgViews : (fetchedVideos > 0 ? views / Int64(fetchedVideos) : 0)
     }
+
+    /// مفتاح مستقل لكل منصة حتى لا يتعارض حساب TikTok وFacebook بنفس الاسم.
+    var videoCacheKey: String {
+        platform == .facebook ? "facebook:\(handle.lowercased())" : handle
+    }
+
+    var isFacebook: Bool { platform == .facebook }
 
     /// مجموع مشاهدات المنشورات المحمّلة دقيق فقط إذا كانت كل المنشورات محمّلة
     /// وكانت مشاهداتها غير مقرّبة من TikTok.
@@ -180,14 +225,16 @@ struct Account: Identifiable, Codable, Hashable {
         case likes, posts, views, videoLikes, comments, shares, fetchedVideos, posts24h, views24h, posts7d, weeklyViews
         case avgViews, coverage, connected, publicStats, status, error, lastSyncedAt, createdAt
         case profileExact, viewsExact, dailyComplete, dailyViewsExact, weeklyComplete, weeklyViewsExact, allPostsLoaded
+        case postsCountExact
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = c.flexString(.id, default: UUID().uuidString)
-        platform = c.flexString(.platform, default: "tiktok")
+        platform = AccountPlatform(rawValue: c.flexString(.platform, default: "tiktok")) ?? .tiktok
         handle = c.flexString(.handle)
-        url = c.flexString(.url, default: "https://www.tiktok.com/@\(handle)")
+        let fallbackURL = (platform == .facebook ? "https://www.facebook.com/" : "https://www.tiktok.com/@") + handle
+        url = c.flexString(.url, default: fallbackURL)
         displayName = c.flexString(.displayName, default: handle)
         avatarUrl = c.flexStringOrNil(.avatarUrl)
         isVerified = c.flexBool(.isVerified)
@@ -195,6 +242,7 @@ struct Account: Identifiable, Codable, Hashable {
         following = c.flexInt64(.following)
         likes = c.flexInt64(.likes)
         posts = c.flexInt(.posts)
+        postsCountExact = c.flexBool(.postsCountExact, default: platform == .tiktok)
         views = c.flexInt64(.views)
         videoLikes = c.flexInt64(.videoLikes)
         comments = c.flexInt64(.comments)
@@ -224,9 +272,9 @@ struct Account: Identifiable, Codable, Hashable {
         createdAt = c.flexString(.createdAt, default: "")
     }
 
-    init(id: String, handle: String, displayName: String, url: String = "", avatarUrl: String? = nil,
+    init(id: String, platform: AccountPlatform = .tiktok, handle: String, displayName: String, url: String = "", avatarUrl: String? = nil,
          isVerified: Bool = false, followers: Int64 = 0, following: Int64 = 0, likes: Int64 = 0,
-         posts: Int = 0, views: Int64 = 0, videoLikes: Int64 = 0, comments: Int64 = 0, shares: Int64 = 0,
+         posts: Int = 0, postsCountExact: Bool = true, views: Int64 = 0, videoLikes: Int64 = 0, comments: Int64 = 0, shares: Int64 = 0,
          fetchedVideos: Int = 0, posts24h: Int = 0, views24h: Int64 = 0,
          posts7d: Int = 0, weeklyViews: Int64 = 0,
          avgViews: Int64 = 0, coverage: Double = 1, connected: Bool = true,
@@ -235,9 +283,11 @@ struct Account: Identifiable, Codable, Hashable {
          weeklyComplete: Bool = true, weeklyViewsExact: Bool = true, allPostsLoaded: Bool = false,
          status: String = "ok", error: String? = nil, lastSyncedAt: String? = nil, createdAt: String = "") {
         self.id = id
-        self.platform = "tiktok"
+        self.platform = platform
         self.handle = handle
-        self.url = url.isEmpty ? "https://www.tiktok.com/@\(handle)" : url
+        self.url = url.isEmpty
+            ? ((platform == .facebook ? "https://www.facebook.com/" : "https://www.tiktok.com/@") + handle)
+            : url
         self.displayName = displayName
         self.avatarUrl = avatarUrl
         self.isVerified = isVerified
@@ -245,6 +295,7 @@ struct Account: Identifiable, Codable, Hashable {
         self.following = following
         self.likes = likes
         self.posts = posts
+        self.postsCountExact = postsCountExact
         self.views = views
         self.videoLikes = videoLikes
         self.comments = comments

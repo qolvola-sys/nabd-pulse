@@ -1,0 +1,820 @@
+import Foundation
+
+enum DirectFacebookError: LocalizedError {
+    case invalidLink
+    case notFound
+    case blocked
+    case badResponse
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidLink:
+            return "رابط صفحة فيسبوك غير صالح"
+        case .notFound:
+            return "لم نجد هذه الصفحة العلنية على فيسبوك"
+        case .blocked:
+            return "فيسبوك مشغول مؤقتاً — ستُحدَّث الإحصاءات تلقائياً"
+        case .badResponse:
+            return "فيسبوك لم يُرجع بيانات جديدة — ستُحدَّث تلقائياً"
+        }
+    }
+
+    var isTemporary: Bool {
+        switch self {
+        case .blocked, .badResponse:
+            return true
+        case .invalidLink, .notFound:
+            return false
+        }
+    }
+}
+
+struct DirectFacebookResult {
+    var account: Account
+    var videos: [VideoItem]
+}
+
+/// مرجع صفحة فيسبوك بعد تطبيع الرابط. نحفظ `handle` كمعرّف ثابت
+/// (اسم الصفحة أو رقمها) حتى لا يتكرر الحساب بأشكال روابط مختلفة.
+struct FacebookPageReference {
+    var inputURL: URL
+    var handle: String
+    var canonicalURL: String
+    var isNumericID: Bool
+}
+
+/// يحلّل صفحة فيسبوك العامة كما يعرضها فيسبوك للزائر غير المسجّل.
+/// نستخدم User-Agent الخاص بـGooglebot لأن فيسبوك يعيد الصفحة الكاملة له،
+/// بينما يعيد متصفحاً عادياً إلى شاشة تسجيل الدخول.
+enum FacebookPageParser {
+    private static let reservedPaths: Set<String> = [
+        "login", "login.php", "checkpoint", "recover", "help", "policies", "privacy",
+        "terms", "settings", "messages", "notifications", "friends", "bookmarks",
+        "watch", "reels", "videos", "photos", "stories", "share", "sharer", "sharer.php",
+        "groups", "events", "gaming", "marketplace", "fundraisers", "ads", "business",
+        "pages", "people", "profile.php", "pg", "p", "dialog", "plugins", "hashtag",
+        "search", "l.php", "ajax", "composer", "notes", "photo.php", "story.php",
+    ]
+
+    // MARK: - تطبيع الروابط
+
+    static func reference(from raw: String) -> FacebookPageReference? {
+        var input = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !input.isEmpty else { return nil }
+
+        let lower = input.lowercased()
+        if lower.hasPrefix("www.facebook.com") ||
+            lower.hasPrefix("facebook.com") ||
+            lower.hasPrefix("m.facebook.com") ||
+            lower.hasPrefix("web.facebook.com") ||
+            lower.hasPrefix("mbasic.facebook.com") ||
+            lower.hasPrefix("fb.com") ||
+            lower.hasPrefix("www.fb.com") {
+            input = "https://" + input
+        } else if lower.hasPrefix("profile.php") {
+            input = "https://www.facebook.com/" + input
+        } else if !input.contains("://"), input.contains("/") {
+            input = "https://www.facebook.com/" + input
+        }
+
+        if !input.contains("://") {
+            return referenceForHandle(input)
+        }
+
+        guard let components = URLComponents(string: input),
+              let host = components.host?.lowercased(),
+              host.contains("facebook.com") || host == "fb.com" || host == "www.fb.com" else {
+            return nil
+        }
+
+        let rawPath = components.percentEncodedPath
+        let path = rawPath
+            .split(separator: "/", omittingEmptySubsequences: true)
+            .map { String($0).removingPercentEncoding ?? String($0) }
+        guard let first = path.first, !first.isEmpty else { return nil }
+
+        if first.lowercased() == "profile.php" {
+            let id = components.queryItems?.first(where: { $0.name == "id" })?.value
+                ?? components.queryItems?.first(where: { $0.name == "username" })?.value
+            guard let id, isNumeric(id) else { return nil }
+            return numericReference(id)
+        }
+
+        if first.lowercased() == "pages" || first.lowercased() == "people" {
+            if let id = path.last, isNumeric(id) {
+                return numericReference(id)
+            }
+            if path.count >= 2 {
+                return referenceForHandle(path[1])
+            }
+            return nil
+        }
+
+        if first.lowercased() == "pg" {
+            if let id = path.dropFirst().first(where: { isNumeric($0) }) {
+                return numericReference(id)
+            }
+            if path.count >= 2 {
+                return referenceForHandle(path[1])
+            }
+            return nil
+        }
+
+        let handle = first.hasPrefix("@") ? String(first.dropFirst()) : first
+        guard !reservedPaths.contains(handle.lowercased()), isValidHandle(handle) else { return nil }
+        return referenceForHandle(handle)
+    }
+
+    private static func referenceForHandle(_ raw: String) -> FacebookPageReference? {
+        var handle = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        while handle.hasPrefix("@") { handle.removeFirst() }
+        guard isValidHandle(handle) else { return nil }
+        let lowered = handle.lowercased()
+        guard !reservedPaths.contains(lowered) else { return nil }
+
+        if isNumeric(handle) {
+            return numericReference(handle)
+        }
+        return FacebookPageReference(
+            inputURL: URL(string: "https://www.facebook.com/\(handle)")!,
+            handle: lowered,
+            canonicalURL: "https://www.facebook.com/\(handle)",
+            isNumericID: false
+        )
+    }
+
+    private static func numericReference(_ id: String) -> FacebookPageReference {
+        FacebookPageReference(
+            inputURL: URL(string: "https://www.facebook.com/profile.php?id=\(id)")!,
+            handle: id,
+            canonicalURL: "https://www.facebook.com/profile.php?id=\(id)",
+            isNumericID: true
+        )
+    }
+
+    private static func isValidHandle(_ value: String) -> Bool {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count >= 2, trimmed.count <= 80 else { return false }
+        return trimmed.range(of: #"^[A-Za-z0-9._]+$"#, options: .regularExpression) != nil
+    }
+
+    private static func isNumeric(_ value: String) -> Bool {
+        !value.isEmpty && value.range(of: #"^[0-9]+$"#, options: .regularExpression) != nil
+    }
+
+    // MARK: - تحليل الصفحة
+
+    static func parse(
+        html: String,
+        reference: FacebookPageReference,
+        createdAt: String?
+    ) throws -> DirectFacebookResult {
+        let objects = jsonObjects(in: html)
+        let isLogin = html.contains("login_form")
+            || html.contains("login_page")
+            || html.contains("id=\"login_popup_cta_form\"")
+        let title = cleanName(metaContent(in: html, property: "og:title") ?? "")
+        let pageURL = metaContent(in: html, property: "og:url") ?? ""
+        let ogImage = metaContent(in: html, property: "og:image") ?? ""
+
+        let userVanity = firstRegexGroup(#""userVanity"\s*:\s*"([^"]+)""#, in: html)
+        let userID = firstRegexGroup(#""userID"\s*:\s*"([0-9]+)""#, in: html)
+
+        var handle = reference.handle
+        if let userVanity, isValidHandle(userVanity), !isNumeric(userVanity) {
+            handle = userVanity.lowercased()
+        } else if reference.isNumericID, let userID, isNumeric(userID) {
+            handle = userID
+        }
+
+        var canonicalURL = reference.canonicalURL
+        if !reference.isNumericID,
+           !pageURL.isEmpty,
+           let url = URL(string: pageURL),
+           let host = url.host?.lowercased(),
+           host.contains("facebook.com"),
+           !url.path.contains("/login") {
+            canonicalURL = pageURL
+        } else if !reference.isNumericID {
+            canonicalURL = "https://www.facebook.com/\(handle)"
+        }
+
+        guard !title.isEmpty else {
+            if isLogin { throw DirectFacebookError.blocked }
+            throw DirectFacebookError.notFound
+        }
+        if isLogin && title.lowercased() == "facebook" {
+            throw DirectFacebookError.blocked
+        }
+
+        let displayName = cleanedPageName(title)
+        guard !displayName.isEmpty else { throw DirectFacebookError.notFound }
+
+        let avatar = profilePicture(in: objects) ?? (ogImage.isEmpty ? nil : decodeHTMLEntities(ogImage))
+
+        let social = socialCounts(in: objects)
+        let followers = social.followers.value
+        let following = social.following.value
+        let followersExact = social.followers.exact
+        let followingExact = social.following.exact
+        let posts = parsePosts(in: objects)
+        let now = Int(Date().timeIntervalSince1970)
+        let daySeconds = 24 * 60 * 60
+        let weekSeconds = 7 * daySeconds
+        let recent = posts.filter { $0.createTime >= now - daySeconds && $0.createTime <= now + 300 }
+        let weekly = posts.filter { $0.createTime >= now - weekSeconds && $0.createTime <= now + 300 }
+        let totalViews = posts.reduce(Int64(0)) { $0 + $1.views }
+        let recentViews = recent.reduce(Int64(0)) { $0 + $1.views }
+        let weeklyViews = weekly.reduce(Int64(0)) { $0 + $1.views }
+        let totalLikes = posts.reduce(Int64(0)) { $0 + $1.likes }
+        let totalComments = posts.reduce(Int64(0)) { $0 + $1.comments }
+        let totalShares = posts.reduce(Int64(0)) { $0 + $1.shares }
+        let videoPosts = posts.filter { $0.viewsExact || $0.views > 0 }
+
+        // خلاصة الصفحة العامة تعرض ٢٠ منشوراً. إن كانت أقل فهي كل المنشورات
+        // المتاحة، وإن كانت ٢٠ فقد يكون هناك المزيد لا يعرضه فيسبوك للزائر.
+        let feedLimit = 20
+        let allPostsLoaded = posts.count < feedLimit
+        let oldest = posts.map(\.createTime).min() ?? 0
+        let dailyComplete = allPostsLoaded || (oldest > 0 && oldest < now - daySeconds)
+        let weeklyComplete = allPostsLoaded || (oldest > 0 && oldest < now - weekSeconds)
+        let viewsExact = posts.allSatisfy { $0.viewsExact }
+        let dailyViewsExact = dailyComplete && recent.allSatisfy { $0.viewsExact }
+        let weeklyViewsExact = weeklyComplete && weekly.allSatisfy { $0.viewsExact }
+        let coverage = allPostsLoaded ? 1 : min(1, Double(posts.count) / Double(feedLimit))
+        let createdAtValue = createdAt ?? ISO8601DateFormatter.nabd.string(from: Date())
+
+        let account = Account(
+            id: "direct-facebook-\(reference.handle.lowercased())",
+            platform: .facebook,
+            handle: handle,
+            displayName: displayName,
+            url: canonicalURL,
+            avatarUrl: avatar,
+            isVerified: false,
+            followers: followers,
+            following: following,
+            likes: 0,
+            posts: posts.count,
+            postsCountExact: false,
+            views: totalViews,
+            videoLikes: totalLikes,
+            comments: totalComments,
+            shares: totalShares,
+            fetchedVideos: posts.count,
+            posts24h: recent.count,
+            views24h: recentViews,
+            posts7d: weekly.count,
+            weeklyViews: weeklyViews,
+            avgViews: videoPosts.isEmpty ? 0 : totalViews / Int64(videoPosts.count),
+            coverage: coverage,
+            connected: false,
+            publicStats: true,
+            profileExact: followersExact && followingExact,
+            viewsExact: viewsExact,
+            dailyComplete: dailyComplete,
+            dailyViewsExact: dailyViewsExact,
+            weeklyComplete: weeklyComplete,
+            weeklyViewsExact: weeklyViewsExact,
+            allPostsLoaded: allPostsLoaded,
+            status: "public",
+            error: nil,
+            lastSyncedAt: ISO8601DateFormatter.nabd.string(from: Date()),
+            createdAt: createdAtValue
+        )
+
+        return DirectFacebookResult(account: account, videos: posts)
+    }
+
+    // MARK: - المنشورات
+
+    private static func parsePosts(in objects: [Any]) -> [VideoItem] {
+        guard let feed = firstDictionary(forKey: "timeline_list_feed_units", in: objects),
+              let edges = feed["edges"] as? [Any] else { return [] }
+
+        var seen = Set<String>()
+        var posts: [VideoItem] = []
+        for edge in edges {
+            guard let node = (edge as? [String: Any])?["node"] as? [String: Any] else { continue }
+            guard let creationTime = firstInt(forKey: "creation_time", in: node), creationTime > 0 else { continue }
+
+            let postID = firstString(forKey: "post_id", in: node)
+                ?? firstString(forKey: "story_fbid", in: node)
+                ?? "\(creationTime)-\(posts.count)"
+            guard !seen.contains(postID) else { continue }
+            seen.insert(postID)
+
+            let permalink = postPermalink(in: node, postID: postID)
+            let hasVideo = isVideoPost(in: node, permalink: permalink)
+            let message = postMessage(in: node)
+            let viewsValue = hasVideo ? firstInt64(forKey: "video_view_count", in: node) : nil
+            let views = viewsValue ?? 0
+            let image = postImage(in: node, hasVideo: hasVideo)
+
+            let title: String
+            if !message.isEmpty {
+                title = message
+            } else if hasVideo {
+                title = "فيديو فيسبوك"
+            } else {
+                title = "منشور فيسبوك"
+            }
+
+            posts.append(VideoItem(
+                id: postID,
+                title: title,
+                coverUrl: image,
+                shareUrl: permalink,
+                duration: 0,
+                createTime: creationTime,
+                views: views,
+                likes: reactionCount(in: node),
+                comments: commentCount(in: node),
+                shares: shareCount(in: node),
+                // فيسبوك ينشر مشاهدات الفيديو فقط. المنشورات النصية والصور
+                // لا تكشف مشاهدات عامة، لذا نعلّمها غير دقيقة بدل اعتبارها صفراً.
+                viewsExact: hasVideo && viewsValue != nil
+            ))
+        }
+
+        return posts.sorted { $0.createTime > $1.createTime }
+    }
+
+    private static func postPermalink(in node: [String: Any], postID: String) -> String {
+        if let url = node["permalink_url"] as? String, !url.isEmpty { return url }
+        if let url = firstString(forKey: "wwwURL", in: node), !url.isEmpty { return url }
+        if let url = firstString(forKey: "url", in: node), url.contains("facebook.com") { return url }
+        return "https://www.facebook.com/\(postID)"
+    }
+
+    private static func isVideoPost(in node: [String: Any], permalink: String) -> Bool {
+        if permalink.contains("/videos/") || permalink.contains("/reel/") || permalink.contains("/watch/") {
+            return true
+        }
+        if firstString(forKey: "videoId", in: node) != nil { return true }
+        if firstInt64(forKey: "video_view_count", in: node) != nil { return true }
+        return false
+    }
+
+    private static func postMessage(in node: [String: Any]) -> String {
+        let story = (node["comet_sections"] as? [String: Any])?["content"] as? [String: Any]
+        let storyNode = story?["story"] as? [String: Any]
+        if let text = messageText(in: storyNode?["message"]) { return text }
+        if let text = messageText(in: node["story"]) { return text }
+        if let text = messageText(in: node["message"]) { return text }
+        if let text = firstMessageText(in: node) { return text }
+        return ""
+    }
+
+    private static func messageText(in object: Any?) -> String? {
+        guard let dictionary = object as? [String: Any] else { return nil }
+        if let text = dictionary["text"] as? String, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return trimmedText(text)
+        }
+        if let story = dictionary["story"] as? [String: Any],
+           let message = story["message"] as? [String: Any],
+           let text = message["text"] as? String,
+           !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return trimmedText(text)
+        }
+        return nil
+    }
+
+    private static func firstMessageText(in object: Any) -> String? {
+        if let dictionary = object as? [String: Any] {
+            if let message = dictionary["message"] as? [String: Any],
+               let text = message["text"] as? String,
+               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return trimmedText(text)
+            }
+            for value in dictionary.values {
+                if let found = firstMessageText(in: value) { return found }
+            }
+        } else if let array = object as? [Any] {
+            for value in array {
+                if let found = firstMessageText(in: value) { return found }
+            }
+        }
+        return nil
+    }
+
+    private static func trimmedText(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func postImage(in node: [String: Any], hasVideo: Bool) -> String? {
+        if let photo = firstDictionary(forKey: "photo_image", in: node),
+           let uri = photo["uri"] as? String, !uri.isEmpty {
+            return uri
+        }
+        if hasVideo {
+            if let thumbnail = firstDictionary(forKey: "preferred_thumbnail", in: node),
+               let image = thumbnail["image"] as? [String: Any],
+               let uri = image["uri"] as? String, !uri.isEmpty {
+                return uri
+            }
+            if let thumbnail = firstDictionary(forKey: "thumbnailImage", in: node),
+               let uri = thumbnail["uri"] as? String, !uri.isEmpty {
+                return uri
+            }
+        }
+        return nil
+    }
+
+    // MARK: - إحصاءات التفاعل
+
+    private static func reactionCount(in node: [String: Any]) -> Int64 {
+        if let dictionary = firstDictionary(forKey: "reaction_count", in: node),
+           let count = int64(from: dictionary["count"]) {
+            return count
+        }
+        if let raw = firstValue(forKey: "reaction_count", in: node),
+           let count = int64(from: raw) {
+            return count
+        }
+        return 0
+    }
+
+    private static func commentCount(in node: [String: Any]) -> Int64 {
+        if let renderer = firstDictionary(forKey: "comment_rendering_instance", in: node),
+           let comments = renderer["comments"] as? [String: Any],
+           let count = int64(from: comments["total_count"]) {
+            return count
+        }
+        if let count = firstInt64(forKey: "total_comment_count", in: node) {
+            return count
+        }
+        return 0
+    }
+
+    private static func shareCount(in node: [String: Any]) -> Int64 {
+        if let dictionary = firstDictionary(forKey: "share_count", in: node),
+           let count = int64(from: dictionary["count"]) {
+            return count
+        }
+        if let raw = firstValue(forKey: "share_count", in: node),
+           let count = int64(from: raw) {
+            return count
+        }
+        return 0
+    }
+
+    // MARK: - الملف الشخصي
+
+    private static func cleanedPageName(_ raw: String) -> String {
+        var value = decodeHTMLEntities(raw)
+        let suffixes = [" | Facebook", " - Facebook", " | فيسبوك", " - Home", " - الصفحة الرئيسية"]
+        for suffix in suffixes where value.hasSuffix(suffix) {
+            value = String(value.dropLast(suffix.count))
+        }
+        return value.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func cleanName(_ raw: String) -> String {
+        decodeHTMLEntities(raw).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func profilePicture(in objects: [Any]) -> String? {
+        guard let picture = firstDictionary(forKey: "profile_picture", in: objects) else { return nil }
+        return picture["uri"] as? String
+    }
+
+    private struct SocialCount {
+        var value: Int64
+        var exact: Bool
+    }
+
+    private static func socialCounts(in objects: [Any]) -> (followers: SocialCount, following: SocialCount) {
+        var followers = SocialCount(value: 0, exact: false)
+        var following = SocialCount(value: 0, exact: false)
+
+        if let context = firstDictionary(forKey: "profile_social_context", in: objects),
+           let content = context["content"] as? [Any] {
+            for item in content {
+                guard let dictionary = item as? [String: Any] else { continue }
+                let uri = (dictionary["uri"] as? String)?.lowercased() ?? ""
+                let text = ((dictionary["text"] as? [String: Any])?["text"] as? String) ?? ""
+                if uri.contains("/followers") || text.contains("متابع") || text.lowercased().contains("follower") {
+                    if let parsed = parseHumanCount(text) {
+                        followers = SocialCount(value: parsed.value, exact: parsed.exact)
+                    }
+                } else if uri.contains("/following") || text.contains("يتابع") || text.lowercased().contains("following") {
+                    if let parsed = parseHumanCount(text) {
+                        following = SocialCount(value: parsed.value, exact: parsed.exact)
+                    }
+                }
+            }
+        }
+
+        return (followers, following)
+    }
+
+    /// يقرأ أرقام فيسبوك المعروضة مثل «٢٨ مليون» أو «28M» أو «1,234».
+    private static func parseHumanCount(_ raw: String) -> (value: Int64, exact: Bool)? {
+        var value = normalizeDigits(raw)
+        value = value
+            .replacingOccurrences(of: "\u{200f}", with: "")
+            .replacingOccurrences(of: "\u{200e}", with: "")
+            .replacingOccurrences(of: "\u{061c}", with: "")
+            .replacingOccurrences(of: "\u{00a0}", with: " ")
+            .replacingOccurrences(of: "\u{202f}", with: " ")
+            .replacingOccurrences(of: "\u{066c}", with: "")
+            .replacingOccurrences(of: "\u{066b}", with: ".")
+            .replacingOccurrences(of: ",", with: "")
+            .replacingOccurrences(of: "٬", with: "")
+            .replacingOccurrences(of: " ", with: "")
+
+        guard let regex = try? NSRegularExpression(pattern: #"([0-9]+(?:\.[0-9]+)?)"#),
+              let match = regex.firstMatch(in: value, range: NSRange(value.startIndex..., in: value)),
+              let numberRange = Range(match.range(at: 1), in: value),
+              let number = Double(value[numberRange]) else { return nil }
+
+        let tail = String(value[numberRange.upperBound...]).lowercased()
+        let multiplier: Double
+        let exact: Bool
+        if tail.contains("مليار") || tail.contains("billion") || tail.contains("b") {
+            multiplier = 1_000_000_000
+            exact = false
+        } else if tail.contains("مليون") || tail.contains("million") || tail.contains("m") {
+            multiplier = 1_000_000
+            exact = false
+        } else if tail.contains("ألف") || tail.contains("الف") || tail.contains("thousand") || tail.contains("k") {
+            multiplier = 1_000
+            exact = false
+        } else {
+            multiplier = 1
+            exact = true
+        }
+
+        return (Int64((number * multiplier).rounded()), exact)
+    }
+
+    private static func normalizeDigits(_ raw: String) -> String {
+        let digits: [Character: Character] = [
+            "٠": "0", "١": "1", "٢": "2", "٣": "3", "٤": "4",
+            "٥": "5", "٦": "6", "٧": "7", "٨": "8", "٩": "9",
+            "۰": "0", "۱": "1", "۲": "2", "۳": "3", "۴": "4",
+            "۵": "5", "۶": "6", "۷": "7", "۸": "8", "۹": "9",
+        ]
+        return String(raw.map { digits[$0] ?? $0 })
+    }
+
+    // MARK: - أدوات JSON وHTML
+
+    private static func jsonObjects(in html: String) -> [Any] {
+        guard let regex = try? NSRegularExpression(
+            pattern: #"<script[^>]*type=["']application/json["'][^>]*>([\s\S]*?)</script>"#,
+            options: [.caseInsensitive]
+        ) else { return [] }
+
+        let range = NSRange(html.startIndex..., in: html)
+        return regex.matches(in: html, range: range).compactMap { match in
+            guard let contentRange = Range(match.range(at: 1), in: html) else { return nil }
+            let content = String(html[contentRange])
+            guard let data = content.data(using: .utf8) else { return nil }
+            return try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
+        }
+    }
+
+    private static func firstDictionary(forKey key: String, in object: Any) -> [String: Any]? {
+        if let dictionary = object as? [String: Any] {
+            if let value = dictionary[key] as? [String: Any] { return value }
+            for value in dictionary.values {
+                if let found = firstDictionary(forKey: key, in: value) { return found }
+            }
+        } else if let array = object as? [Any] {
+            for value in array {
+                if let found = firstDictionary(forKey: key, in: value) { return found }
+            }
+        }
+        return nil
+    }
+
+    private static func firstValue(forKey key: String, in object: Any) -> Any? {
+        if let dictionary = object as? [String: Any] {
+            if let value = dictionary[key] { return value }
+            for value in dictionary.values {
+                if let found = firstValue(forKey: key, in: value) { return found }
+            }
+        } else if let array = object as? [Any] {
+            for value in array {
+                if let found = firstValue(forKey: key, in: value) { return found }
+            }
+        }
+        return nil
+    }
+
+    private static func firstString(forKey key: String, in object: Any) -> String? {
+        guard let value = firstValue(forKey: key, in: object) else { return nil }
+        if let string = value as? String { return string }
+        if let number = value as? NSNumber { return number.stringValue }
+        return nil
+    }
+
+    private static func firstInt(forKey key: String, in object: Any) -> Int? {
+        guard let value = firstValue(forKey: key, in: object) else { return nil }
+        if let int = value as? Int { return int }
+        if let number = value as? NSNumber { return number.intValue }
+        if let string = value as? String { return Int(string) }
+        return nil
+    }
+
+    private static func firstInt64(forKey key: String, in object: Any) -> Int64? {
+        guard let value = firstValue(forKey: key, in: object) else { return nil }
+        return int64(from: value)
+    }
+
+    private static func int64(from value: Any?) -> Int64? {
+        if let int = value as? Int { return Int64(int) }
+        if let int64 = value as? Int64 { return int64 }
+        if let number = value as? NSNumber { return number.int64Value }
+        if let string = value as? String { return Int64(string) }
+        return nil
+    }
+
+    private static func firstRegexGroup(_ pattern: String, in string: String) -> String? {
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(in: string, range: NSRange(string.startIndex..., in: string)),
+              match.numberOfRanges > 1,
+              let range = Range(match.range(at: 1), in: string) else { return nil }
+        return String(string[range])
+    }
+
+    private static func metaContent(in html: String, property: String) -> String? {
+        let escaped = NSRegularExpression.escapedPattern(for: property)
+        guard let regex = try? NSRegularExpression(
+            pattern: #"<meta\b[^>]*(?:property|name)=["']\#(escaped)["'][^>]*>"#,
+            options: [.caseInsensitive]
+        ) else { return nil }
+        let range = NSRange(html.startIndex..., in: html)
+        guard let match = regex.firstMatch(in: html, range: range),
+              let tagRange = Range(match.range, in: html) else { return nil }
+        let tag = String(html[tagRange])
+        guard let contentRegex = try? NSRegularExpression(
+            pattern: #"content=["']([^"']*)["']"#,
+            options: [.caseInsensitive]
+        ) else { return nil }
+        let tagNSRange = NSRange(tag.startIndex..., in: tag)
+        guard let contentMatch = contentRegex.firstMatch(in: tag, range: tagNSRange),
+              let contentRange = Range(contentMatch.range(at: 1), in: tag) else { return nil }
+        return String(tag[contentRange])
+    }
+
+    static func decodeHTMLEntities(_ raw: String) -> String {
+        var value = raw
+        let named = [
+            "&amp;": "&", "&quot;": "\"", "&apos;": "'", "&lt;": "<", "&gt;": ">",
+            "&nbsp;": " ", "&#39;": "'", "&#x27;": "'", "&mdash;": "—", "&ndash;": "–",
+            "&hellip;": "…", "&lsquo;": "‘", "&rsquo;": "’", "&ldquo;": "“", "&rdquo;": "”",
+        ]
+        for (entity, replacement) in named {
+            value = value.replacingOccurrences(of: entity, with: replacement)
+        }
+
+        if let regex = try? NSRegularExpression(pattern: #"&#x([0-9A-Fa-f]+);"#) {
+            let range = NSRange(value.startIndex..., in: value)
+            for match in regex.matches(in: value, range: range).reversed() {
+                guard let full = Range(match.range, in: value),
+                      let hexRange = Range(match.range(at: 1), in: value),
+                      let scalarValue = UInt32(value[hexRange], radix: 16),
+                      let scalar = UnicodeScalar(scalarValue) else { continue }
+                value.replaceSubrange(full, with: String(scalar))
+            }
+        }
+
+        if let regex = try? NSRegularExpression(pattern: #"&#([0-9]+);"#) {
+            let range = NSRange(value.startIndex..., in: value)
+            for match in regex.matches(in: value, range: range).reversed() {
+                guard let full = Range(match.range, in: value),
+                      let decimalRange = Range(match.range(at: 1), in: value),
+                      let scalarValue = UInt32(value[decimalRange]),
+                      let scalar = UnicodeScalar(scalarValue) else { continue }
+                value.replaceSubrange(full, with: String(scalar))
+            }
+        }
+
+        return value
+    }
+}
+
+/// يقرأ صفحة فيسبوك العامة مباشرة. لا تسجيل دخول ولا خادم.
+final class DirectFacebookService {
+    static let shared = DirectFacebookService()
+
+    private let userAgent = "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"
+    private let minimumRequestGap: TimeInterval = 0.45
+    private let session: URLSession
+    private var lastRequestAt = Date.distantPast
+
+    private init() {
+        let configuration = URLSessionConfiguration.default
+        configuration.timeoutIntervalForRequest = 25
+        configuration.timeoutIntervalForResource = 32
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        configuration.httpShouldSetCookies = false
+        configuration.httpCookieAcceptPolicy = .never
+        configuration.waitsForConnectivity = false
+        session = URLSession(configuration: configuration)
+    }
+
+    func fetch(handle: String, url: String? = nil, createdAt: String? = nil) async throws -> DirectFacebookResult {
+        let rawLink = (url?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? url : nil) ?? handle
+        guard let reference = FacebookPageParser.reference(from: rawLink) ?? FacebookPageParser.reference(from: handle) else {
+            throw DirectFacebookError.invalidLink
+        }
+
+        var candidates: [String] = []
+        if let url, !url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            candidates.append(url)
+        }
+        candidates.append(reference.inputURL.absoluteString)
+        if reference.isNumericID {
+            candidates.append("https://www.facebook.com/\(reference.handle)")
+        } else {
+            candidates.append("https://www.facebook.com/\(reference.handle)")
+            candidates.append("https://m.facebook.com/\(reference.handle)")
+        }
+        candidates.append("https://web.facebook.com/\(reference.handle)")
+
+        var seen = Set<String>()
+        var lastError: DirectFacebookError = .blocked
+        for candidate in candidates {
+            guard let url = URL(string: candidate), seen.insert(url.absoluteString).inserted else { continue }
+            do {
+                let page = try await load(url)
+                if page.html.contains("login_form") &&
+                    !page.html.contains("timeline_list_feed_units") &&
+                    !page.html.contains("og:title") {
+                    throw DirectFacebookError.blocked
+                }
+                return try FacebookPageParser.parse(
+                    html: page.html,
+                    reference: reference,
+                    createdAt: createdAt
+                )
+            } catch let error as DirectFacebookError {
+                lastError = error
+                if !error.isTemporary { throw error }
+            } catch {
+                lastError = .blocked
+            }
+        }
+        throw lastError
+    }
+
+    private func load(_ url: URL) async throws -> (html: String, finalURL: URL) {
+        let elapsed = Date().timeIntervalSince(lastRequestAt)
+        if elapsed < minimumRequestGap {
+            let delay = UInt64((minimumRequestGap - elapsed) * 1_000_000_000)
+            try? await Task.sleep(nanoseconds: delay)
+        }
+        lastRequestAt = Date()
+
+        var request = URLRequest(
+            url: url,
+            cachePolicy: .reloadIgnoringLocalCacheData,
+            timeoutInterval: 25
+        )
+        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", forHTTPHeaderField: "Accept")
+        request.setValue("en-US,en;q=0.9,ar;q=0.8", forHTTPHeaderField: "Accept-Language")
+        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+        request.setValue("1", forHTTPHeaderField: "Upgrade-Insecure-Requests")
+
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let http = response as? HTTPURLResponse else {
+                throw DirectFacebookError.badResponse
+            }
+            let html = String(decoding: data, as: UTF8.self)
+            let finalURL = http.url ?? url
+
+            if finalURL.path.lowercased().contains("/login") {
+                throw DirectFacebookError.blocked
+            }
+
+            switch http.statusCode {
+            case 200..<300:
+                if data.count < 200 {
+                    throw DirectFacebookError.badResponse
+                }
+                if html.contains("content isn't available") || html.contains("هذا المحتوى غير متاح") {
+                    throw DirectFacebookError.notFound
+                }
+                return (html, finalURL)
+            case 404, 410:
+                throw DirectFacebookError.notFound
+            case 429, 500..<600:
+                throw DirectFacebookError.blocked
+            default:
+                throw DirectFacebookError.badResponse
+            }
+        } catch let error as DirectFacebookError {
+            throw error
+        } catch {
+            throw DirectFacebookError.blocked
+        }
+    }
+}

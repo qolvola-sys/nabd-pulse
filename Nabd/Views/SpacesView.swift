@@ -12,7 +12,12 @@ struct SpacesBar: View {
 
     @State private var showManager = false
     @State private var showNewSpace = false
+    @State private var showFacebook = false
     @State private var newSpaceName = ""
+
+    private var facebookCount: Int {
+        store.accounts.filter { $0.platform == .facebook }.count
+    }
 
     var body: some View {
         HStack(spacing: 8) {
@@ -32,6 +37,39 @@ struct SpacesBar: View {
                     }
                 }
             }
+
+            Button {
+                store.haptic(.selection)
+                showFacebook = true
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "globe")
+                        .font(.system(size: 11, weight: .bold))
+                    Text("فيسبوك")
+                        .font(.system(size: 11.5, weight: .bold))
+                    if facebookCount > 0 {
+                        Text(Num.full(Int64(facebookCount)))
+                            .font(.system(size: 8.5, weight: .bold, design: .rounded))
+                            .foregroundColor(Theme.cyan)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
+                            .background(Capsule().fill(Theme.cyan.opacity(0.14)))
+                    }
+                }
+                .foregroundColor(Theme.cyan)
+                .padding(.horizontal, 9)
+                .frame(height: 38)
+                .background(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(Theme.cyan.opacity(0.08))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .strokeBorder(Theme.cyan.opacity(0.24), lineWidth: 1)
+                )
+            }
+            .buttonStyle(PressableStyle(scale: 0.97))
+            .accessibilityIdentifier("open-facebook")
 
             Menu {
                 Button {
@@ -83,6 +121,13 @@ struct SpacesBar: View {
         .sheet(isPresented: $showManager) {
             SpacesManagerView()
                 .environmentObject(store)
+        }
+        .fullScreenCover(isPresented: $showFacebook) {
+            ZStack {
+                AppBackground()
+                AccountsView(platform: .facebook)
+                    .environmentObject(store)
+            }
         }
         .alert("مساحة جديدة", isPresented: $showNewSpace) {
             TextField("اسم المساحة", text: $newSpaceName)
@@ -210,7 +255,7 @@ struct SpacesManagerView: View {
             }
             Button("إلغاء", role: .cancel) { deleteTarget = nil }
         } message: {
-            Text("ستُحذف حسابات هذه المساحة من التطبيق فقط، ولن تتأثر حسابات TikTok. لا يمكن التراجع.")
+            Text("ستُحذف حسابات هذه المساحة من التطبيق فقط، ولن تتأثر الحسابات الأصلية على TikTok أو فيسبوك. لا يمكن التراجع.")
         }
     }
 

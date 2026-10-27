@@ -170,7 +170,7 @@ struct ReportSettingsView: View {
                 Image(systemName: "iphone.gen2")
                     .font(.system(size: 9.5, weight: .semibold))
                     .foregroundColor(Theme.cyan)
-                Text("iOS لا يسمح بقراءة TikTok في الخلفية. إن كان التطبيق مغلقاً عند الموعد، يُنشأ التقرير عند أول فتح بعده.")
+                Text("iOS لا يسمح بقراءة الصفحات في الخلفية. إن كان التطبيق مغلقاً عند الموعد، يُنشأ التقرير عند أول فتح بعده.")
                     .font(.system(size: 9.5))
                     .foregroundColor(Theme.textTertiary)
                     .lineSpacing(3)
@@ -292,8 +292,7 @@ struct ReportSettingsView: View {
                 guard activeSpaceID != nil else { return }
                 editingTemplate = ReportManualTemplate(
                     pageName: "",
-                    platform: .facebook,
-                    required: "حسب التبليغ"
+                    platform: .facebook
                 )
                 store.haptic(.selection)
             } label: {
@@ -326,8 +325,10 @@ struct ReportSettingsView: View {
                     .lineLimit(1)
                 HStack(spacing: 4) {
                     Text(template.platform.title)
-                    Text("·")
-                    Text(template.required)
+                    if !template.program.isEmpty {
+                        Text("·")
+                        Text(template.program)
+                    }
                     if !template.url.isEmpty {
                         Text("·")
                         Image(systemName: "link")
@@ -377,8 +378,8 @@ struct ReportSettingsView: View {
 
             bullet("التقرير اليومي يغطي نافذة ٢٤ ساعة كاملة تنتهي عند ١:٠٠ ص. الحد الأخير غير شامل.")
             bullet("التقرير الأسبوعي يغطي ٧ أيام كاملة تنتهي عند اليوم والساعة المحددين.")
-            bullet("الأرقام تُقرأ من TikTok وقت التوليد. أي نقص أو تقريب يظهر بعلامة واضحة بدل تقديمه كرقم دقيق.")
-            bullet("الصفحات اليدوية لا تُقرأ من TikTok؛ تُضاف فارغة ليتم إدخال أرقامها وتعديلها قبل التصدير.")
+            bullet("الأرقام تُقرأ من TikTok وفيسبوك وقت التوليد. أي نقص أو تقريب يظهر بعلامة واضحة بدل تقديمه كرقم دقيق.")
+            bullet("الصفحات اليدوية لا تُقرأ آلياً؛ تُضاف فارغة ليتم إدخال أرقامها وتعديلها قبل التصدير.")
         }
         .card(padding: 15)
     }
@@ -439,7 +440,6 @@ private struct ManualReportPageEditor: View {
     @State private var pageName: String
     @State private var platform: ReportPlatform
     @State private var program: String
-    @State private var required: String
     @State private var notes: String
     @State private var url: String
     @State private var validationMessage: String?
@@ -450,7 +450,6 @@ private struct ManualReportPageEditor: View {
         _pageName = State(initialValue: template.pageName)
         _platform = State(initialValue: template.platform)
         _program = State(initialValue: template.program)
-        _required = State(initialValue: template.required)
         _notes = State(initialValue: template.notes)
         _url = State(initialValue: template.url)
     }
@@ -483,9 +482,6 @@ private struct ManualReportPageEditor: View {
 
                         fieldLabel("البرنامج")
                         input("مثال: فيسبوك", text: $program)
-
-                        fieldLabel("العدد المطلوب")
-                        input("مثال: 8 أو حسب التبليغ", text: $required)
 
                         fieldLabel("الملاحظات")
                         TextEditor(text: $notes)
@@ -607,9 +603,6 @@ private struct ManualReportPageEditor: View {
         updated.program = program.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? platform.defaultProgram
             : program.trimmingCharacters(in: .whitespacesAndNewlines)
-        updated.required = required.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? "حسب التبليغ"
-            : required.trimmingCharacters(in: .whitespacesAndNewlines)
         updated.notes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
         updated.url = url.trimmingCharacters(in: .whitespacesAndNewlines)
 

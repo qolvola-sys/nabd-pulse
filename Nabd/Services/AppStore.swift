@@ -95,6 +95,7 @@ final class AppStore: ObservableObject {
 
     private let oauth = OAuthSession()
     private let direct = DirectTikTokService.shared
+    private let facebook = DirectFacebookService.shared
     private var directVideos: [String: [VideoItem]] = [:]
     private var didBootstrap = false
     private var lastAutoRefresh: Date?
@@ -188,12 +189,16 @@ final class AppStore: ObservableObject {
         return accounts.filter { membership[$0.id] == groupID }
     }
 
-    /// معلومات موضع الحساب داخل مجموعته الحالية.
+    /// معلومات موضع الحساب داخل مجموعته الحالية، محسوبة داخل منصة الحساب
+    /// نفسها حتى يبقى ترتيب TikTok مستقلاً عن ترتيب فيسبوك.
     func groupInfo(for accountID: String) -> (group: AccountGroup, index: Int, total: Int)? {
         guard let space = activeSpace,
               let groupID = space.groupMembership[accountID],
-              let group = space.groups.first(where: { $0.id == groupID }) else { return nil }
-        let members = accounts.filter { space.groupMembership[$0.id] == groupID }
+              let group = space.groups.first(where: { $0.id == groupID }),
+              let account = accounts.first(where: { $0.id == accountID }) else { return nil }
+        let members = accounts.filter {
+            space.groupMembership[$0.id] == groupID && $0.platform == account.platform
+        }
         guard let index = members.firstIndex(where: { $0.id == accountID }) else { return nil }
         return (group, index, members.count)
     }
@@ -292,28 +297,44 @@ final class AppStore: ObservableObject {
     /// تحريك حساب خطوة واحدة داخل مجموعته الحالية.
     func moveAccount(_ id: String, by offset: Int) {
         guard let spaceIndex = spaces.firstIndex(where: { $0.id == activeSpaceID }),
-              let groupID = spaces[spaceIndex].groupMembership[id] else { return }
-        let members = accounts.filter { spaces[spaceIndex].groupMembership[$0.id] == groupID }
+              let groupID = spaces[spaceIndex].groupMembership[id],
+              let moving = accounts.first(where: { $0.id == id }) else { return }
+        let members = accounts.filter {
+            spaces[spaceIndex].groupMembership[$0.id] == groupID && $0.platform == moving.platform
+        }
         guard let index = members.firstIndex(where: { $0.id == id }) else { return }
         moveAccount(id, toPositionInGroup: index + offset)
     }
 
-    /// تحريك حساب إلى موضع داخل مجموعته الحالية (0-based).
+    /// تحريك حساب إلى موضع داخل مجموعته الحالية (0-based). الترتيب منفصل
+    /// لكل منصة حتى لا يغيّر ترتيب TikTok عند ترتيب صفحات فيسبوك.
     func moveAccount(_ id: String, toPositionInGroup position: Int) {
         guard isDirect,
               let spaceIndex = spaces.firstIndex(where: { $0.id == activeSpaceID }),
-              let groupID = spaces[spaceIndex].groupMembership[id] else { return }
+              let groupID = spaces[spaceIndex].groupMembership[id],
+              let moving = accounts.first(where: { $0.id == id }) else { return }
 
-        var members = accounts.filter { spaces[spaceIndex].groupMembership[$0.id] == groupID }
+        let members = accounts.filter {
+            spaces[spaceIndex].groupMembership[$0.id] == groupID && $0.platform == moving.platform
+        }
         guard let current = members.firstIndex(where: { $0.id == id }) else { return }
         let target = min(max(position, 0), members.count - 1)
         guard target != current else { return }
 
-        let account = members.remove(at: current)
-        members.insert(account, at: target)
-
-        let updated = orderedAccounts(spaceIndex: spaceIndex, groupOverrides: [groupID: members])
-        accounts = updated
+        // نحرّك الحساب داخل المصفوفة العامة فقط، حتى لا يتغير ترتيب بقية
+        // الحسابات (بما فيها الحسابات من المنصة الأخرى) داخل المجموعة.
+        let targetID = members[target].id
+        let account = members[current]
+        guard let fromIndex = accounts.firstIndex(where: { $0.id == id }) else { return }
+        accounts.remove(at: fromIndex)
+        guard let targetIndex = accounts.firstIndex(where: { $0.id == targetID }) else {
+            accounts.insert(account, at: min(fromIndex, accounts.count))
+            saveDirectAccounts()
+            haptic(.impact)
+            return
+        }
+        let insertionIndex = current < target ? targetIndex + 1 : targetIndex
+        accounts.insert(account, at: min(max(insertionIndex, 0), accounts.count))
         saveDirectAccounts()
         haptic(.impact)
     }
@@ -335,37 +356,18 @@ final class AppStore: ObservableObject {
             return false
         }
 
-        var members = otherMembers
-        members.insert(account, at: 0)
         spaces[spaceIndex].groupMembership[id] = groupID
-
-        let updated = orderedAccounts(spaceIndex: spaceIndex, groupOverrides: [groupID: members])
-        accounts = updated
+        guard let movingIndex = accounts.firstIndex(where: { $0.id == id }) else { return false }
+        accounts.remove(at: movingIndex)
+        if let firstMember = otherMembers.first,
+           let insertionIndex = accounts.firstIndex(where: { $0.id == firstMember.id }) {
+            accounts.insert(account, at: insertionIndex)
+        } else {
+            accounts.append(account)
+        }
         saveDirectAccounts()
         haptic(.impact)
         return true
-    }
-
-    /// يبني ترتيب الحسابات من المجموعات بترتيبها، مع الحفاظ على
-    /// ترتيب كل مجموعة. يستخدم `groupOverrides` لإدراج ترتيب جديد
-    /// لمجموعة قبل أن يُحدّث في `accounts`.
-    private func orderedAccounts(spaceIndex: Int, groupOverrides: [String: [Account]] = [:]) -> [Account] {
-        guard spaces.indices.contains(spaceIndex) else { return accounts }
-        let membership = spaces[spaceIndex].groupMembership
-        var result: [Account] = []
-        var used = Set<String>()
-
-        for group in spaces[spaceIndex].groups {
-            let members = groupOverrides[group.id] ?? accounts.filter { membership[$0.id] == group.id }
-            for account in members where !used.contains(account.id) {
-                result.append(account)
-                used.insert(account.id)
-            }
-        }
-        for account in accounts where !used.contains(account.id) {
-            result.append(account)
-        }
-        return result
     }
 
     // MARK: - إدارة المجموعات
@@ -526,6 +528,37 @@ final class AppStore: ObservableObject {
 
     // MARK: - الشبكة
 
+    private func fetchResult(for account: Account) async throws -> (account: Account, videos: [VideoItem]) {
+        if account.platform == .facebook {
+            let result = try await facebook.fetch(
+                handle: account.handle,
+                url: account.url,
+                createdAt: account.createdAt
+            )
+            return (result.account, result.videos)
+        }
+        let result = try await direct.fetch(
+            handle: account.handle,
+            knownPosts: account.posts,
+            createdAt: account.createdAt
+        )
+        return (result.account, result.videos)
+    }
+
+    private func fetchResult(
+        handle: String,
+        platform: AccountPlatform,
+        url: String = "",
+        createdAt: String? = nil
+    ) async throws -> (account: Account, videos: [VideoItem]) {
+        if platform == .facebook {
+            let result = try await facebook.fetch(handle: handle, url: url, createdAt: createdAt)
+            return (result.account, result.videos)
+        }
+        let result = try await direct.fetch(handle: handle, createdAt: createdAt)
+        return (result.account, result.videos)
+    }
+
     func refresh(showSpinner: Bool = true) async {
         guard !isDemo else { return }
         if let client {
@@ -572,12 +605,11 @@ final class AppStore: ObservableObject {
         var successes = 0
         for account in accounts {
             do {
-                let result = try await direct.fetch(
-                    handle: account.handle,
-                    knownPosts: account.posts,
-                    createdAt: account.createdAt
-                )
+                let result = try await fetchResult(for: account)
                 var fresh = result.account
+                // نحافظ على معرّف الحساب المحفوظ: صفحات فيسبوك قد يتغيّر
+                // عرض اسمها بعد إضافتها برقمها، وتغيير المعرّف يفقد مجموعتها.
+                fresh.id = account.id
                 if result.videos.isEmpty {
                     fresh = preservingVideoStats(in: fresh, from: account)
                 }
@@ -585,7 +617,7 @@ final class AppStore: ObservableObject {
                 fresh.error = nil
                 updated[account.id] = fresh
                 if !result.videos.isEmpty {
-                    directVideos[account.handle] = result.videos
+                    directVideos[fresh.videoCacheKey] = result.videos
                 }
                 successes += 1
             } catch {
@@ -653,7 +685,10 @@ final class AppStore: ObservableObject {
         if isDirect {
             await refreshDirect(showSpinner: false)
             if lastDirectRefreshSucceeded {
-                showToast("تم تحديث \(accounts.count) حساباً من TikTok", .success)
+                let hasTikTok = accounts.contains { $0.platform == .tiktok }
+                let hasFacebook = accounts.contains { $0.platform == .facebook }
+                let sourceName = hasTikTok && hasFacebook ? "TikTok وفيسبوك" : (hasFacebook ? "فيسبوك" : "TikTok")
+                showToast("تم تحديث \(accounts.count) حساباً من \(sourceName)", .success)
                 haptic(.success)
             } else if !accounts.isEmpty {
                 showToast("تم عرض أحدث الإحصاءات المحفوظة", .info)
@@ -689,12 +724,9 @@ final class AppStore: ObservableObject {
             isSyncing = true
             defer { isSyncing = false }
             do {
-                let result = try await direct.fetch(
-                    handle: account.handle,
-                    knownPosts: account.posts,
-                    createdAt: account.createdAt
-                )
+                let result = try await fetchResult(for: account)
                 var fresh = result.account
+                fresh.id = account.id
                 if result.videos.isEmpty {
                     fresh = preservingVideoStats(in: fresh, from: account)
                 }
@@ -705,10 +737,10 @@ final class AppStore: ObservableObject {
                     summary = Summary.make(from: accounts)
                 }
                 if !result.videos.isEmpty {
-                    directVideos[account.handle] = result.videos
+                    directVideos[fresh.videoCacheKey] = result.videos
                 }
                 saveDirectAccounts()
-                showToast("تم تحديث @\(account.handle)", .success)
+                showToast("تم تحديث \(account.platform == .facebook ? "صفحة" : "@")\(account.handle)", .success)
                 haptic(.success)
             } catch {
                 if let index = accounts.firstIndex(where: { $0.id == account.id }) {
@@ -717,7 +749,7 @@ final class AppStore: ObservableObject {
                     summary = Summary.make(from: accounts)
                 }
                 saveDirectAccounts()
-                showToast("تم الاحتفاظ بآخر إحصاءات @\(account.handle)", .info)
+                showToast("تم الاحتفاظ بآخر إحصاءات \(account.platform == .facebook ? "صفحة" : "@")\(account.handle)", .info)
                 haptic(.impact)
             }
             return
@@ -740,13 +772,17 @@ final class AppStore: ObservableObject {
         }
     }
 
-    func add(links: [String]) async -> AddAccountsResponse? {
+    func add(links: [String], platform: AccountPlatform = .tiktok) async -> AddAccountsResponse? {
         guard !isDemo else {
             showToast("أوقف الوضع التجريبي أولاً", .info)
             return nil
         }
         if isDirect {
-            return await addDirect(links: links)
+            return await addDirect(links: links, platform: platform)
+        }
+        if platform == .facebook {
+            showToast("إضافة فيسبوك تعمل في الوضع المباشر", .info)
+            return nil
         }
         guard let client else {
             showToast("اختر مصدر البيانات من الإعدادات", .info)
@@ -766,7 +802,7 @@ final class AppStore: ObservableObject {
         }
     }
 
-    private func addDirect(links: [String]) async -> AddAccountsResponse? {
+    private func addDirect(links: [String], platform: AccountPlatform) async -> AddAccountsResponse? {
         isAdding = true
         defer { isAdding = false }
 
@@ -775,20 +811,32 @@ final class AppStore: ObservableObject {
         var invalid: [String] = []
 
         for raw in links {
-            guard let handle = Self.handle(from: raw) else {
+            guard let handle = Self.handle(from: raw, platform: platform) else {
                 invalid.append(raw)
                 continue
             }
-            if accounts.contains(where: { $0.handle.lowercased() == handle }) {
+            if accounts.contains(where: {
+                $0.platform == platform && $0.handle.lowercased() == handle.lowercased()
+            }) {
                 skipped.append(SkippedAccount(handle: handle, reason: "duplicate"))
                 continue
             }
 
+            let idPrefix = platform == .facebook ? "direct-facebook-" : "direct-"
+            let accountID = idPrefix + handle
+            let profileURL: String
+            if platform == .facebook,
+               let reference = FacebookPageParser.reference(from: handle) {
+                profileURL = reference.canonicalURL
+            } else {
+                profileURL = platform.profileURLPrefix + handle
+            }
             let placeholder = Account(
-                id: "direct-\(handle)",
+                id: accountID,
+                platform: platform,
                 handle: handle,
-                displayName: "@\(handle)",
-                url: "https://www.tiktok.com/@\(handle)",
+                displayName: platform == .facebook ? handle : "@\(handle)",
+                url: profileURL,
                 status: "pending",
                 createdAt: ISO8601DateFormatter.nabd.string(from: Date())
             )
@@ -802,18 +850,43 @@ final class AppStore: ObservableObject {
             #endif
 
             do {
-                let result = try await direct.fetch(handle: handle)
-                if let index = accounts.firstIndex(where: { $0.handle == handle }) {
-                    accounts[index] = result.account
+                let result = try await fetchResult(
+                    handle: handle,
+                    platform: platform,
+                    url: profileURL,
+                    createdAt: placeholder.createdAt
+                )
+                // قد يتغيّر معرّف فيسبوك بعد قراءة الصفحة (اسم مستخدم بدل رقم).
+                // نمنع التكرار إذا كانت الصفحة نفسها مضافة بالفعل.
+                if platform == .facebook,
+                   let duplicate = accounts.first(where: {
+                       $0.id != accountID &&
+                       $0.platform == .facebook &&
+                       ($0.id == result.account.id ||
+                        $0.handle.caseInsensitiveCompare(result.account.handle) == .orderedSame)
+                   }) {
+                    accounts.removeAll { $0.id == accountID }
+                    #if MUTABAA
+                    if let spaceIndex = spaces.firstIndex(where: { $0.id == activeSpaceID }) {
+                        spaces[spaceIndex].groupMembership.removeValue(forKey: accountID)
+                    }
+                    #endif
+                    skipped.append(SkippedAccount(handle: duplicate.handle, reason: "duplicate"))
+                    continue
                 }
-                directVideos[handle] = result.videos
-                created.append(result.account)
+                var fetched = result.account
+                fetched.id = accountID
+                if let index = accounts.firstIndex(where: { $0.id == accountID }) {
+                    accounts[index] = fetched
+                }
+                directVideos[fetched.videoCacheKey] = result.videos
+                created.append(fetched)
             } catch {
                 // نضيف الحساب بحالة انتظار بدل عرض خطأ. التحديث التالي سيكمل البيانات.
                 var pending = placeholder
                 pending.status = "pending"
                 pending.error = nil
-                if let index = accounts.firstIndex(where: { $0.handle == handle }) {
+                if let index = accounts.firstIndex(where: { $0.id == accountID }) {
                     accounts[index] = pending
                 }
                 created.append(pending)
@@ -849,7 +922,10 @@ final class AppStore: ObservableObject {
         )
     }
 
-    static func handle(from raw: String) -> String? {
+    static func handle(from raw: String, platform: AccountPlatform = .tiktok) -> String? {
+        if platform == .facebook {
+            return FacebookPageParser.reference(from: raw)?.handle
+        }
         var value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty else { return nil }
         value = value.replacingOccurrences(of: "https://", with: "")
@@ -878,21 +954,19 @@ final class AppStore: ObservableObject {
             return (account, DemoData.videos(for: account, limit: min(limit, 30)))
         }
         if isDirect {
-            if let cached = directVideos[account.handle], !cached.isEmpty {
+            let cacheKey = account.videoCacheKey
+            if let cached = directVideos[cacheKey], !cached.isEmpty {
                 let current = accounts.first(where: { $0.id == account.id }) ?? account
                 return (current, Array(cached.prefix(limit)))
             }
-            let result = try await direct.fetch(
-                handle: account.handle,
-                knownPosts: account.posts,
-                createdAt: account.createdAt
-            )
+            let result = try await fetchResult(for: account)
             var fresh = result.account
+            fresh.id = account.id
             if result.videos.isEmpty {
                 fresh = preservingVideoStats(in: fresh, from: account)
             }
             if !result.videos.isEmpty {
-                directVideos[account.handle] = result.videos
+                directVideos[fresh.videoCacheKey] = result.videos
             }
             saveDirectAccounts()
             if let index = accounts.firstIndex(where: { $0.id == account.id }) {
@@ -900,7 +974,7 @@ final class AppStore: ObservableObject {
                 summary = Summary.make(from: accounts)
             }
             let videos = result.videos.isEmpty
-                ? (directVideos[account.handle] ?? [])
+                ? (directVideos[fresh.videoCacheKey] ?? directVideos[cacheKey] ?? [])
                 : result.videos
             return (fresh, Array(videos.prefix(limit)))
         }
@@ -921,20 +995,26 @@ final class AppStore: ObservableObject {
             #if MUTABAA
             if let index = spaces.firstIndex(where: { $0.id == activeSpaceID }) {
                 spaces[index].groupMembership.removeValue(forKey: account.id)
+                // نحدّث نسخة المساحة النشطة قبل فحص المساحات الأخرى، وإلا
+                // ظهر الحساب المحذوف فيها دائماً ولم يُحذف كاش فيديوهاته.
+                spaces[index].accounts = accounts
             }
             // قد يكون الحساب نفسه مضافاً في مساحة أخرى؛ لا نحذف فيديوهاته حينها.
             let usedInAnotherSpace = spaces.contains { space in
-                space.accounts.contains { $0.handle == account.handle }
+                space.accounts.contains {
+                    $0.platform == account.platform &&
+                    $0.handle.caseInsensitiveCompare(account.handle) == .orderedSame
+                }
             }
             if !usedInAnotherSpace {
-                directVideos.removeValue(forKey: account.handle)
+                directVideos.removeValue(forKey: account.videoCacheKey)
             }
             #else
-            directVideos.removeValue(forKey: account.handle)
+            directVideos.removeValue(forKey: account.videoCacheKey)
             #endif
             summary = Summary.make(from: accounts)
             saveDirectAccounts()
-            showToast("تم حذف @\(account.handle)", .success)
+            showToast("تم حذف \(account.platform == .facebook ? "صفحة" : "@")\(account.handle)", .success)
             haptic(.success)
             return
         }
@@ -969,7 +1049,8 @@ final class AppStore: ObservableObject {
 
     func connect(_ account: Account) async {
         if isDirect {
-            showToast("الإحصاءات تُقرأ مباشرة من TikTok — لا حاجة لتسجيل الدخول", .info)
+            let source = account.platform == .facebook ? "فيسبوك" : "TikTok"
+            showToast("الإحصاءات تُقرأ مباشرة من \(source) — لا حاجة لتسجيل الدخول", .info)
             return
         }
         guard !isDemo else {
