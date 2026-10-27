@@ -1,9 +1,13 @@
 import SwiftUI
 import UIKit
+import Combine
 
 enum AppTab: String, CaseIterable, Identifiable {
     case dashboard
     case accounts
+    #if MUTABAA
+    case reports
+    #endif
     case settings
 
     var id: String { rawValue }
@@ -12,6 +16,9 @@ enum AppTab: String, CaseIterable, Identifiable {
         switch self {
         case .dashboard: return "الرئيسية"
         case .accounts: return "الحسابات"
+        #if MUTABAA
+        case .reports: return "التقارير"
+        #endif
         case .settings: return "الإعدادات"
         }
     }
@@ -20,6 +27,9 @@ enum AppTab: String, CaseIterable, Identifiable {
         switch self {
         case .dashboard: return "waveform.path.ecg"
         case .accounts: return "person.2"
+        #if MUTABAA
+        case .reports: return "tablecells"
+        #endif
         case .settings: return "slider.horizontal.3"
         }
     }
@@ -28,6 +38,9 @@ enum AppTab: String, CaseIterable, Identifiable {
         switch self {
         case .dashboard: return "waveform.path.ecg"
         case .accounts: return "person.2.fill"
+        #if MUTABAA
+        case .reports: return "tablecells.fill"
+        #endif
         case .settings: return "slider.horizontal.3"
         }
     }
@@ -35,8 +48,14 @@ enum AppTab: String, CaseIterable, Identifiable {
 
 struct RootView: View {
     @EnvironmentObject private var store: AppStore
+    #if MUTABAA
+    @EnvironmentObject private var reports: ReportsManager
+    #endif
     @Environment(\.scenePhase) private var scenePhase
     @State private var tab: AppTab
+    #if MUTABAA
+    private let scheduleTimer = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
+    #endif
 
     init() {
         // يُستخدم لمعاينة الشاشات داخل CI: --screen=accounts
@@ -57,6 +76,10 @@ struct RootView: View {
                                   onOpenAccounts: { switchTab(.accounts) })
                 case .accounts:
                     AccountsView()
+                #if MUTABAA
+                case .reports:
+                    ReportsView()
+                #endif
                 case .settings:
                     SettingsView()
                 }
@@ -94,10 +117,31 @@ struct RootView: View {
         .modifier(AppLayoutDirectionModifier())
         .preferredColorScheme(.dark)
         .tint(Theme.cyan)
-        .onAppear { store.bootstrap() }
-        .onChange(of: scenePhase) { phase in
-            if phase == .active { store.refreshIfStale() }
+        .onAppear {
+            store.bootstrap()
+            runReportsCheck()
         }
+        .onChange(of: scenePhase) { phase in
+            if phase == .active {
+                store.refreshIfStale()
+                runReportsCheck()
+            }
+        }
+        #if MUTABAA
+        .onReceive(scheduleTimer) { _ in
+            runReportsCheck()
+        }
+        #endif
+    }
+
+    /// التوليد التلقائي لا يعمل في الخلفية على iOS. نفحص الموعد عند فتح
+    /// التطبيق، وعند عودته للنشاط، ومرة كل دقيقة أثناء بقائه مفتوحاً.
+    private func runReportsCheck() {
+        #if MUTABAA
+        Task {
+            await reports.autoGenerateIfNeeded(store: store)
+        }
+        #endif
     }
 
     private var spacesTopInsetEnabled: Bool {

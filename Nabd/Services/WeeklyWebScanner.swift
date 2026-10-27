@@ -45,12 +45,20 @@ final class WeeklyWebScanner: NSObject, WKNavigationDelegate {
         defer { release() }
 
         var payload = await runScan(handle: handle, cutoff: cutoff, rounds: 14)
-        if payload == nil || (payload?.videos.isEmpty ?? true) {
+        if shouldRetry(payload) {
             // محاولة ثانية بعد مهلة قصيرة: أحياناً يعيد TikTok صفحة تحقق مؤقتة.
             try? await Task.sleep(nanoseconds: 1_200_000_000)
             payload = await runScan(handle: handle, cutoff: cutoff, rounds: 10)
         }
         return payload
+    }
+
+    /// لا نعيد المحاولة لحساب جديد بلا منشورات: الصفر رقم حقيقي.
+    private func shouldRetry(_ payload: WeeklyScanPayload?) -> Bool {
+        guard let payload else { return true }
+        if !payload.videos.isEmpty { return false }
+        let postCount = Int(intValue(payload.profile?["posts"]))
+        return postCount > 0
     }
 
     /// يضمن أن قراءة واحدة فقط تستخدم المتصفح المخفي في أي لحظة.
@@ -145,6 +153,8 @@ final class WeeklyWebScanner: NSObject, WKNavigationDelegate {
             guard let id = raw["id"] as? String else { continue }
             var created = Int(intValue(raw["createTime"]))
             if created <= 0 { created = DirectTikTokService.createTime(from: id) }
+            let videoExact = raw["viewsExact"] as? Bool ?? false
+            if !videoExact { exact = false }
             videos.append(VideoItem(
                 id: id,
                 title: raw["title"] as? String ?? "",
@@ -156,7 +166,7 @@ final class WeeklyWebScanner: NSObject, WKNavigationDelegate {
                 likes: intValue(raw["likes"]),
                 comments: intValue(raw["comments"]),
                 shares: intValue(raw["shares"]),
-                viewsExact: true
+                viewsExact: videoExact
             ))
         }
 
@@ -180,10 +190,25 @@ final class WeeklyWebScanner: NSObject, WKNavigationDelegate {
             }
         }
 
+        // حساب جديد بلا منشورات: الصفر رقم حقيقي وليس فشل قراءة.
+        if videos.isEmpty, let profile, Int(intValue(profile["posts"])) == 0 {
+            return WeeklyScanPayload(
+                videos: [],
+                profile: profile,
+                exact: true,
+                complete: true,
+                hasMore: false
+            )
+        }
+
         guard !videos.isEmpty else { return nil }
         videos.sort { $0.createTime > $1.createTime }
 
-        let complete = sawOlderThanCutoff || !hasMore
+        // نعتبر النافذة مكتملة إذا تجاوزنا حد البداية، أو انتهت القائمة،
+        // أو عرفنا من statsV2 أننا قرأنا كل منشورات الحساب.
+        let profilePosts = Int(intValue(profile?["posts"]))
+        let readEveryPost = profilePosts > 0 && videos.count >= profilePosts
+        let complete = sawOlderThanCutoff || !hasMore || readEveryPost
 
         return WeeklyScanPayload(
             videos: videos,
@@ -325,15 +350,19 @@ final class WeeklyWebScanner: NSObject, WKNavigationDelegate {
           var stats = item.stats || {};
           var stats2 = item.statsV2 || {};
           var video = item.video || {};
+          var exactViews = stats2.playCount !== undefined &&
+                           stats2.playCount !== null &&
+                           stats2.playCount !== "";
           state.items[id] = {
             id: id,
             createTime: num(item.createTime),
-            views: num(stats2.playCount || stats.playCount),
+            views: num(exactViews ? stats2.playCount : stats.playCount),
             likes: num(stats2.diggCount || stats.diggCount),
             comments: num(stats2.commentCount || stats.commentCount),
             shares: num(stats2.shareCount || stats.shareCount),
             title: item.desc || "",
-            cover: video.cover || video.originCover || video.dynamicCover || ""
+            cover: video.cover || video.originCover || video.dynamicCover || "",
+            viewsExact: exactViews
           };
           state.order.push(id);
         }

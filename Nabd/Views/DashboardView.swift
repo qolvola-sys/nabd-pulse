@@ -7,6 +7,7 @@ struct DashboardView: View {
 
     @State private var selectedAccount: Account?
     @State private var wavePhase: CGFloat = 0
+    @State private var showAllWeeklyAccounts = false
 
     private var hasViews: Bool { store.summary.loadedVideos > 0 && store.summary.views > 0 }
 
@@ -114,6 +115,7 @@ struct DashboardView: View {
 
                 distributionCard
                 topAccountsCard
+                weeklyTopAccountsCard
                 syncSection
             }
             .padding(.horizontal, 18)
@@ -373,10 +375,23 @@ struct DashboardView: View {
             .sorted { $0.views24h > $1.views24h }
     }
 
+    /// ترتيب كل حسابات المساحة بمشاهدات آخر ٧ أيام. الحسابات بلا مشاهدات
+    /// تبقى في «البقية» حتى لا تختفي من القسم.
     private var weeklyAccounts: [Account] {
-        store.accounts
-            .filter { $0.weeklyViews > 0 }
-            .sorted { $0.weeklyViews > $1.weeklyViews }
+        store.accounts.sorted { first, second in
+            if first.weeklyViews == second.weeklyViews {
+                return first.followers > second.followers
+            }
+            return first.weeklyViews > second.weeklyViews
+        }
+    }
+
+    private var weeklyTopFive: [Account] {
+        Array(weeklyAccounts.prefix(5))
+    }
+
+    private var weeklyRest: [Account] {
+        Array(weeklyAccounts.dropFirst(5))
     }
 
     private var last24hCard: some View {
@@ -538,45 +553,6 @@ struct DashboardView: View {
                 }
 
                 Spacer(minLength: 0)
-            }
-
-            if !weeklyAccounts.isEmpty {
-                HairlineDivider()
-
-                VStack(spacing: 0) {
-                    ForEach(Array(weeklyAccounts.prefix(4).enumerated()), id: \.element.id) { index, account in
-                        Button {
-                            store.haptic(.impact)
-                            selectedAccount = account
-                        } label: {
-                            HStack(spacing: 9) {
-                                Text("\(index + 1)")
-                                    .font(.system(size: 10, weight: .bold, design: .rounded))
-                                    .foregroundColor(index == 0 ? Theme.gold : Theme.textTertiary)
-                                    .frame(width: 16)
-                                AvatarView(account: account, size: 29, showVerified: false)
-                                Text(account.displayName)
-                                    .font(.system(size: 11.5, weight: .semibold))
-                                    .foregroundColor(Theme.text)
-                                    .lineLimit(1)
-                                Spacer(minLength: 4)
-                                Text("\(accountWeeklyViewsText(account)) مشاهدة")
-                                    .font(.system(size: 10, weight: .medium, design: .rounded))
-                                    .foregroundColor(Theme.textSecondary)
-                                    .lineLimit(1)
-                                    .minimumScaleFactor(0.7)
-                                WeeklyScoreBadge(score: account.weeklyScore, compact: true, exact: account.weeklyScoreExact)
-                            }
-                            .padding(.vertical, 7)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(PressableStyle(scale: 0.99))
-
-                        if index < min(weeklyAccounts.count, 4) - 1 {
-                            HairlineDivider().opacity(0.5)
-                        }
-                    }
-                }
             }
 
             Text(weeklyFootnote)
@@ -831,6 +807,178 @@ struct DashboardView: View {
             }
         }
         .card(padding: 18)
+    }
+
+    // MARK: - الأعلى مشاهدة هذا الأسبوع
+
+    private var weeklyTopAccountsCard: some View {
+        VStack(spacing: 14) {
+            SectionHeader(
+                title: "أكثر الحسابات مشاهدة في آخر أسبوع",
+                subtitle: "أقوى ٥ حسابات بمشاهدات منشورات آخر ٧ أيام، ثم بقية الحسابات",
+                actionTitle: "كل الحسابات",
+                action: { onOpenAccounts() }
+            )
+
+            if store.isLoading && store.accounts.isEmpty {
+                VStack(spacing: 12) {
+                    ForEach(0..<4, id: \.self) { _ in
+                        HStack(spacing: 11) {
+                            SkeletonBlock(height: 24, width: 24, radius: 12)
+                            SkeletonBlock(height: 36, width: 36, radius: 12)
+                            VStack(alignment: .leading, spacing: 6) {
+                                SkeletonBlock(height: 10, width: 120)
+                                SkeletonBlock(height: 8, width: 80)
+                            }
+                            Spacer()
+                            SkeletonBlock(height: 12, width: 52)
+                        }
+                    }
+                }
+            } else if weeklyAccounts.isEmpty {
+                EmptyStateView(
+                    icon: "person.badge.plus",
+                    title: "لا توجد حسابات بعد",
+                    message: "أضف حساباتك من تبويب الحسابات لعرض ترتيب مشاهدات آخر أسبوع.",
+                    actionTitle: "إضافة حسابات",
+                    action: { onOpenAccounts() }
+                )
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(Array(weeklyTopFive.enumerated()), id: \.element.id) { index, account in
+                        weeklyAccountRow(account, rank: index)
+                        if index < weeklyTopFive.count - 1 || (showAllWeeklyAccounts && !weeklyRest.isEmpty) {
+                            HairlineDivider().opacity(0.55)
+                        }
+                    }
+
+                    if !weeklyRest.isEmpty {
+                        if showAllWeeklyAccounts {
+                            ForEach(Array(weeklyRest.enumerated()), id: \.element.id) { offset, account in
+                                weeklyAccountRow(account, rank: offset + 5)
+                                if offset < weeklyRest.count - 1 {
+                                    HairlineDivider().opacity(0.55)
+                                }
+                            }
+
+                            Button {
+                                withAnimation(.spring(response: 0.34, dampingFraction: 0.86)) {
+                                    showAllWeeklyAccounts = false
+                                }
+                                store.haptic(.selection)
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "chevron.up")
+                                        .font(.system(size: 9, weight: .bold))
+                                    Text("إخفاء بقية الحسابات")
+                                        .font(.system(size: 10.5, weight: .semibold))
+                                    Spacer(minLength: 0)
+                                }
+                                .foregroundColor(Theme.textTertiary)
+                                .padding(.vertical, 10)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(PressableStyle(scale: 0.99))
+                        } else {
+                            Button {
+                                withAnimation(.spring(response: 0.34, dampingFraction: 0.86)) {
+                                    showAllWeeklyAccounts = true
+                                }
+                                store.haptic(.selection)
+                            } label: {
+                                HStack(spacing: 7) {
+                                    Image(systemName: "person.3.fill")
+                                        .font(.system(size: 10, weight: .bold))
+                                    Text("عرض بقية الحسابات")
+                                        .font(.system(size: 10.5, weight: .semibold))
+                                    Text(Num.full(Int64(weeklyRest.count)))
+                                        .font(.system(size: 9.5, weight: .bold, design: .rounded))
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background(Capsule().fill(Theme.surfaceRaised))
+                                    Spacer(minLength: 0)
+                                    Image(systemName: "chevron.down")
+                                        .font(.system(size: 9, weight: .bold))
+                                }
+                                .foregroundColor(Theme.cyan)
+                                .padding(.vertical, 10)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(PressableStyle(scale: 0.99))
+                        }
+                    }
+                }
+            }
+
+            HStack(alignment: .top, spacing: 7) {
+                Image(systemName: "calendar.badge.clock")
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .foregroundColor(Theme.violet)
+                Text("المشاهدات هي مجموع مشاهدات المنشورات المنشورة خلال آخر ٧ أيام. الأرقام التي تظهر بدون ≈ دقيقة 100%، والحسابات التي لم تُقرأ كل منشوراتها تظهر بعلامة تقريب.")
+                    .font(.system(size: 9.5))
+                    .foregroundColor(Theme.textTertiary)
+                    .lineSpacing(3)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .card(padding: 18)
+    }
+
+    private func weeklyAccountRow(_ account: Account, rank: Int) -> some View {
+        Button {
+            store.haptic(.impact)
+            selectedAccount = account
+        } label: {
+            HStack(spacing: 10) {
+                RankBadge(index: rank)
+                AvatarView(account: account, size: 35, showVerified: false)
+
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(spacing: 4) {
+                        Text(account.displayName)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(Theme.text)
+                            .lineLimit(1)
+                        if account.isVerified {
+                            Image(systemName: "checkmark.seal.fill")
+                                .font(.system(size: 8.5))
+                                .foregroundColor(Theme.cyan)
+                        }
+                    }
+
+                    HStack(spacing: 5) {
+                        Text(account.weeklyViews > 0
+                             ? "\(accountWeeklyViewsText(account)) مشاهدة"
+                             : "لا مشاهدات هذا الأسبوع")
+                        if account.weeklyViews > 0 {
+                            Text("·")
+                            Text("\(Num.full(Int64(account.posts7d))) منشور")
+                        }
+                    }
+                    .font(.system(size: 9.5))
+                    .foregroundColor(Theme.textTertiary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+
+                    if account.weeklyViews > 0 {
+                        ProgressBarLine(
+                            value: Double(account.weeklyViews) / Double(max(weeklyAccounts.first?.weeklyViews ?? 1, 1)),
+                            gradient: Theme.violetGradient,
+                            height: 3
+                        )
+                    }
+                }
+
+                Spacer(minLength: 6)
+
+                if account.weeklyViews > 0 {
+                    WeeklyScoreBadge(score: account.weeklyScore, compact: true, exact: account.weeklyScoreExact)
+                }
+            }
+            .padding(.vertical, 8)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(PressableStyle(scale: 0.99))
     }
 
     // MARK: - المزامنة

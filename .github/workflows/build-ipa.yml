@@ -26,6 +26,18 @@ jobs:
       - name: Generate Xcode project
         run: xcodegen generate
 
+      # ------------------------------------------------ اختبار ملف Excel
+      - name: Report Excel smoke test
+        run: |
+          mkdir -p tools-out
+          swiftc -swift-version 5 -O -o tools-out/report-smoke \
+            Nabd/Models/ReportModels.swift \
+            Nabd/Services/XLSXWriter.swift \
+            Nabd/Services/ReportExcelBuilder.swift \
+            Tools/ReportSmokeTest/main.swift
+          ./tools-out/report-smoke tools-out/report-smoke.xlsx
+          python3 Tools/verify_xlsx.py tools-out/report-smoke.xlsx
+
       # ---------------------------------------------------------------- نبض
       - name: Build Nabd (no code signing)
         run: |
@@ -74,9 +86,14 @@ jobs:
 
       - name: Verify Mutabaa Info.plist
         run: |
-          /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" build/Build/Products/Release-iphoneos/Mutabaa.app/Info.plist
-          /usr/libexec/PlistBuddy -c "Print :CFBundleDisplayName" build/Build/Products/Release-iphoneos/Mutabaa.app/Info.plist
-          /usr/libexec/PlistBuddy -c "Print :MinimumOSVersion" build/Build/Products/Release-iphoneos/Mutabaa.app/Info.plist
+          PLIST="build/Build/Products/Release-iphoneos/Mutabaa.app/Info.plist"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleDisplayName" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Print :MinimumOSVersion" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Print :UIFileSharingEnabled" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Print :LSSupportsOpeningDocumentsInPlace" "$PLIST"
 
       - name: Package Mutabaa IPA
         run: |
