@@ -839,18 +839,26 @@ final class AppStore: ObservableObject {
 
             let idPrefix = platform == .facebook ? "direct-facebook-" : "direct-"
             let accountID = idPrefix + handle
+            let facebookReference = platform == .facebook
+                ? FacebookPageParser.reference(from: raw)
+                : nil
             let profileURL: String
-            if platform == .facebook,
-               let reference = FacebookPageParser.reference(from: handle) {
-                profileURL = reference.canonicalURL
+            if let facebookReference {
+                profileURL = facebookReference.canonicalURL
             } else {
                 profileURL = platform.profileURLPrefix + handle
+            }
+            let placeholderName: String
+            if platform == .facebook {
+                placeholderName = facebookReference?.needsResolution == true ? "صفحة فيسبوك" : handle
+            } else {
+                placeholderName = "@\(handle)"
             }
             let placeholder = Account(
                 id: accountID,
                 platform: platform,
                 handle: handle,
-                displayName: platform == .facebook ? handle : "@\(handle)",
+                displayName: placeholderName,
                 url: profileURL,
                 status: "pending",
                 createdAt: ISO8601DateFormatter.nabd.string(from: Date())
@@ -889,9 +897,23 @@ final class AppStore: ObservableObject {
                     skipped.append(SkippedAccount(handle: duplicate.handle, reason: "duplicate"))
                     continue
                 }
+                // روابط المشاركة قد تصل إلى اسم الصفحة الحقيقي بعد الجلب،
+                // فننقل المعرّف المؤقت إلى المعرّف النهائي قبل الحفظ.
+                let finalID = result.account.id
+                if platform == .facebook, finalID != accountID {
+                    #if MUTABAA
+                    if let spaceIndex = spaces.firstIndex(where: { $0.id == activeSpaceID }),
+                       let groupID = spaces[spaceIndex].groupMembership.removeValue(forKey: accountID) {
+                        spaces[spaceIndex].groupMembership[finalID] = groupID
+                    }
+                    #endif
+                    if let index = accounts.firstIndex(where: { $0.id == accountID }) {
+                        accounts[index].id = finalID
+                    }
+                }
                 var fetched = result.account
-                fetched.id = accountID
-                if let index = accounts.firstIndex(where: { $0.id == accountID }) {
+                fetched.id = finalID
+                if let index = accounts.firstIndex(where: { $0.id == finalID }) {
                     accounts[index] = fetched
                 }
                 directVideos[fetched.videoCacheKey] = result.videos
@@ -916,6 +938,9 @@ final class AppStore: ObservableObject {
         source = .direct
         lastRefreshed = Date()
         lastDirectRefreshSucceeded = created.contains { $0.status == "public" || $0.status == "ok" }
+        #if MUTABAA
+        mirrorAccountsIntoActiveSpace()
+        #endif
         saveDirectAccounts()
 
         let ready = created.filter { $0.status == "public" || $0.status == "ok" }.count

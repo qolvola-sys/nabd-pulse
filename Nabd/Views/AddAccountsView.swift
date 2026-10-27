@@ -41,12 +41,33 @@ struct AddAccountsView: View {
         )
     }
 
+    /// نحتفظ بالرابط الأصلي مع الاسم المطبع، لأن روابط فيسبوك
+    /// المختصرة لا يمكن إضافتها بالاسم وحده.
+    private var pendingEntries: [(raw: String, handle: String)] {
+        var seen = Set<String>()
+        return parsed.compactMap { item in
+            guard let handle = item.handle else { return nil }
+            let key = handle.lowercased()
+            guard seen.insert(key).inserted,
+                  !existingHandles.contains(key) else { return nil }
+            return (raw: item.raw, handle: handle)
+        }
+    }
+
+    private var acceptedEntries: [(raw: String, handle: String)] {
+        Array(pendingEntries.prefix(maxAccountsPerBatch))
+    }
+
     private var pendingHandles: [String] {
-        validHandles.filter { !existingHandles.contains($0.lowercased()) }
+        pendingEntries.map(\.handle)
     }
 
     private var acceptedHandles: [String] {
-        Array(pendingHandles.prefix(maxAccountsPerBatch))
+        acceptedEntries.map(\.handle)
+    }
+
+    private var invalidEntries: [String] {
+        parsed.filter { $0.handle == nil }.map(\.raw)
     }
 
     private var overflowCount: Int {
@@ -74,7 +95,8 @@ struct AddAccountsView: View {
                         demoNotice
                     }
                     inputCard
-                    if !validHandles.isEmpty { previewCard }
+                    if invalidCount > 0 { invalidCard }
+                    if !acceptedHandles.isEmpty { previewCard }
                     if let result { resultCard(result) }
                     if let errorText { errorBanner(errorText) }
                     submitButton
@@ -205,7 +227,7 @@ struct AddAccountsView: View {
             ZStack(alignment: .topLeading) {
                 if text.isEmpty {
                     Text(platform == .facebook
-                         ? "https://www.facebook.com/NASA\nhttps://www.facebook.com/profile.php?id=100044561550831\nNASA"
+                         ? "https://www.facebook.com/NASA\nhttps://www.facebook.com/profile.php?id=100044561550831\nhttps://www.facebook.com/share/1AbCdEfGh\nNASA"
                          : "https://www.tiktok.com/@username\n@username2\nhttps://vm.tiktok.com/ZMxxxxx/")
                         .font(.system(size: 12.5, design: .monospaced))
                         .foregroundColor(Theme.textTertiary)
@@ -240,7 +262,7 @@ struct AddAccountsView: View {
                 Label("\(validHandles.count) صالح", systemImage: "checkmark.circle")
                     .foregroundColor(Theme.green)
                 if invalidCount > 0 {
-                    Label("\(invalidCount) غير مفهوم", systemImage: "exclamationmark.circle")
+                    Label("\(invalidCount) غير مدعوم", systemImage: "exclamationmark.circle")
                         .foregroundColor(Theme.gold)
                 }
                 if overflowCount > 0 {
@@ -256,6 +278,42 @@ struct AddAccountsView: View {
         .card(padding: 15)
     }
 
+    private var invalidCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("\(invalidCount) رابط بحاجة إلى مراجعة", systemImage: "questionmark.circle.fill")
+                .font(.system(size: 11.5, weight: .bold))
+                .foregroundColor(Theme.gold)
+
+            Text(invalidHelpText)
+                .font(.system(size: 10.5))
+                .foregroundColor(Theme.textSecondary)
+                .lineSpacing(3)
+
+            ForEach(Array(invalidEntries.prefix(3)), id: \.self) { raw in
+                Text(raw)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(Theme.textTertiary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .environment(\.layoutDirection, .leftToRight)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 14).fill(Theme.gold.opacity(0.07)))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .strokeBorder(Theme.gold.opacity(0.2), lineWidth: 1)
+        )
+    }
+
+    private var invalidHelpText: String {
+        if platform == .facebook {
+            return "تأكد أن الرابط لصفحة عامة. أمثلة: facebook.com/NASA، facebook.com/profile.php?id=123…، أو رابط مشاركة الصفحة. يمكنك أيضاً كتابة اسم الصفحة مباشرة."
+        }
+        return "تأكد أن الرابط لحساب TikTok. أمثلة: tiktok.com/@username أو @username."
+    }
+
     private var previewCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
@@ -269,7 +327,7 @@ struct AddAccountsView: View {
             }
             FlowLayout(spacing: 6) {
                 ForEach(acceptedHandles.prefix(24), id: \.self) { handle in
-                    Text(platform == .facebook ? handle : "@" + handle)
+                    Text(previewLabel(for: handle))
                         .font(.system(size: 10.5, weight: .medium))
                         .foregroundColor(Theme.textSecondary)
                         .padding(.horizontal, 8)
@@ -292,6 +350,16 @@ struct AddAccountsView: View {
             }
         }
         .card(padding: 15)
+    }
+
+    private func previewLabel(for handle: String) -> String {
+        if platform == .facebook {
+            if handle.hasPrefix("share_") { return "رابط مشاركة" }
+            if handle.hasPrefix("fbme_") { return "رابط مختصر" }
+            if handle.hasPrefix("page_") || handle.hasPrefix("p_") { return "صفحة فيسبوك" }
+            return handle
+        }
+        return "@" + handle
     }
 
     private func resultCard(_ result: AddAccountsResponse) -> some View {
@@ -393,9 +461,24 @@ struct AddAccountsView: View {
                     .foregroundColor(Theme.textTertiary)
             }
             if let invalid = result.invalid, !invalid.isEmpty {
-                Label("\(invalid.count) رابط لم يُفهم", systemImage: "questionmark.circle")
-                    .font(.system(size: 10.5))
-                    .foregroundColor(Theme.gold)
+                VStack(alignment: .leading, spacing: 4) {
+                    Label("\(invalid.count) رابط لم يُضف", systemImage: "questionmark.circle")
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundColor(Theme.gold)
+                    ForEach(Array(invalid.prefix(3)), id: \.self) { raw in
+                        Text(raw)
+                            .font(.system(size: 9.5, design: .monospaced))
+                            .foregroundColor(Theme.textTertiary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .environment(\.layoutDirection, .leftToRight)
+                    }
+                    Text(platform == .facebook
+                         ? "استخدم رابط الصفحة العام أو اسم الصفحة مباشرة."
+                         : "استخدم رابط الحساب أو اسم المستخدم مباشرة.")
+                        .font(.system(size: 9.5))
+                        .foregroundColor(Theme.textTertiary)
+                }
             }
             if let errors = result.errors, !errors.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
@@ -429,6 +512,21 @@ struct AddAccountsView: View {
         .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Theme.red.opacity(0.2), lineWidth: 1))
     }
 
+    private var submitTitle: String {
+        let unit = platform == .facebook ? "صفحة" : "حساب"
+        if acceptedHandles.isEmpty {
+            if invalidCount > 0 {
+                return platform == .facebook ? "رابط فيسبوك غير مدعوم" : "رابط TikTok غير مدعوم"
+            }
+            if validHandles.isEmpty { return "أضف رابطاً واحداً على الأقل" }
+            return "كل الحسابات مضافة مسبقاً"
+        }
+        if overflowCount > 0 {
+            return "إضافة أول \(acceptedHandles.count) \(unit)"
+        }
+        return "إضافة \(acceptedHandles.count) \(unit)"
+    }
+
     private var submitButton: some View {
         Button {
             Task { await submit() }
@@ -440,13 +538,7 @@ struct AddAccountsView: View {
                     Image(systemName: "plus.circle.fill")
                         .font(.system(size: 14, weight: .bold))
                 }
-                Text(validHandles.isEmpty
-                     ? "أضف رابطاً واحداً على الأقل"
-                     : (acceptedHandles.isEmpty
-                        ? "كل الحسابات مضافة مسبقاً"
-                        : (overflowCount > 0
-                           ? "إضافة أول \(acceptedHandles.count) حساب"
-                           : "إضافة \(acceptedHandles.count) حساب")))
+                Text(submitTitle)
             }
         }
         .buttonStyle(GradientButtonStyle())
@@ -475,7 +567,7 @@ struct AddAccountsView: View {
 
     private var helpText: String {
         if platform == .facebook {
-            return "نقرأ الصفحة العامة لكل صفحة فيسبوك دون تسجيل دخول: الاسم والمتابعون والمنشورات، ومشاهدات الفيديو المتاحة علناً. يعرض فيسبوك للزائر أحدث ٢٠ منشوراً تقريباً، لذلك تُعلَّم النتيجة جزئية عند الحاجة. المنشورات النصية والصور لا تكشف مشاهدات عامة، فتُحتسب بلا مشاهدات."
+            return "يمكنك لصق رابط الصفحة أو رابط المشاركة المختصر أو كتابة اسم الصفحة؛ نحوّل الرابط تلقائياً إلى الصفحة. نقرأ الصفحة العامة دون تسجيل دخول: الاسم والمتابعون والمنشورات، ومشاهدات الفيديو المتاحة علناً. يعرض فيسبوك للزائر أحدث ٢٠ منشوراً تقريباً، لذلك تُعلَّم النتيجة جزئية عند الحاجة. المنشورات النصية والصور لا تكشف مشاهدات عامة، فتُحتسب بلا مشاهدات."
         }
         return store.useServer
             ? "نسجّل دخول كل حساب مرة واحدة عبر TikTok Display API الرسمي، ثم يبقى مربوطاً ويُحدّث نفسه تلقائياً. لا نطلب كلمة المرور."
@@ -494,7 +586,7 @@ struct AddAccountsView: View {
         editorFocused = false
         isSubmitting = true
         errorText = nil
-        let links = acceptedHandles.map { platform == .facebook ? $0 : "@\($0)" }
+        let links = acceptedEntries.map { platform == .facebook ? $0.raw : "@\($0.handle)" }
         let response = await store.add(links: links, platform: platform)
         isSubmitting = false
         if let response {
@@ -503,7 +595,7 @@ struct AddAccountsView: View {
                 if !keepText { text = "" }
             }
         } else if platform == .facebook {
-            errorText = "تعذّرت إضافة صفحات فيسبوك. تأكد من الرابط والاتصال بالإنترنت ثم أعد المحاولة."
+            errorText = "تعذّرت إضافة صفحات فيسبوك. تأكد أن الصفحة عامة وأن الرابط يبدأ بـ facebook.com، ثم أعد المحاولة."
         } else if store.useServer {
             errorText = "لم نستطع إضافة الحسابات. تأكد من اتصال الخادم ثم أعد المحاولة."
         }

@@ -9,7 +9,7 @@ enum DirectFacebookError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalidLink:
-            return "رابط صفحة فيسبوك غير صالح"
+            return "لم نتعرف على رابط الصفحة. استخدم facebook.com/PageName أو facebook.com/profile.php?id=123… أو رابط مشاركة الصفحة"
         case .notFound:
             return "لم نجد هذه الصفحة العلنية على فيسبوك"
         case .blocked:
@@ -41,6 +41,9 @@ struct FacebookPageReference {
     var handle: String
     var canonicalURL: String
     var isNumericID: Bool
+    /// روابط المشاركة المختصرة أو الروابط العربية تحتاج متابعة التحويل
+    /// لمعرفة الصفحة النهائية قبل تثبيت معرّف الحساب.
+    var needsResolution: Bool = false
 }
 
 /// يحلّل صفحة فيسبوك العامة كما يعرضها فيسبوك للزائر غير المسجّل.
@@ -54,6 +57,7 @@ enum FacebookPageParser {
         "groups", "events", "gaming", "marketplace", "fundraisers", "ads", "business",
         "pages", "people", "profile.php", "pg", "p", "dialog", "plugins", "hashtag",
         "search", "l.php", "ajax", "composer", "notes", "photo.php", "story.php",
+        "permalink.php", "share.php", "story_fbid", "reel",
     ]
 
     // MARK: - تطبيع الروابط
@@ -68,8 +72,11 @@ enum FacebookPageParser {
             lower.hasPrefix("m.facebook.com") ||
             lower.hasPrefix("web.facebook.com") ||
             lower.hasPrefix("mbasic.facebook.com") ||
+            lower.hasPrefix("free.facebook.com") ||
             lower.hasPrefix("fb.com") ||
-            lower.hasPrefix("www.fb.com") {
+            lower.hasPrefix("www.fb.com") ||
+            lower.hasPrefix("fb.me") ||
+            lower.hasPrefix("www.fb.me") {
             input = "https://" + input
         } else if lower.hasPrefix("profile.php") {
             input = "https://www.facebook.com/" + input
@@ -83,8 +90,16 @@ enum FacebookPageParser {
 
         guard let components = URLComponents(string: input),
               let host = components.host?.lowercased(),
-              host.contains("facebook.com") || host == "fb.com" || host == "www.fb.com" else {
+              isFacebookHost(host) else {
             return nil
+        }
+
+        // روابط Messenger تُغلِّف الرابط الأصلي في l.facebook.com/l.php?u=…
+        if host == "l.facebook.com" || host == "lm.facebook.com" {
+            guard let target = components.queryItems?.first(where: { $0.name == "u" })?.value else {
+                return nil
+            }
+            return reference(from: target)
         }
 
         let rawPath = components.percentEncodedPath
@@ -93,36 +108,147 @@ enum FacebookPageParser {
             .map { String($0).removingPercentEncoding ?? String($0) }
         guard let first = path.first, !first.isEmpty else { return nil }
 
+        // روابط fb.me المختصرة تُحل عند الجلب.
+        if host == "fb.me" || host == "www.fb.me" {
+            return unresolvedReference(
+                url: components.url?.absoluteString ?? input,
+                code: first,
+                prefix: "fbme"
+            )
+        }
+
+        // روابط المشاركة الجديدة: facebook.com/share/...
+        if first.lowercased() == "share" {
+            return unresolvedReference(
+                url: components.url?.absoluteString ?? input,
+                code: path.dropFirst().joined(separator: "_"),
+                prefix: "share"
+            )
+        }
+
+        // صيغة المشاركة القديمة: facebook.com/share.php?u=…
+        if first.lowercased() == "share.php",
+           let target = components.queryItems?.first(where: { $0.name == "u" })?.value {
+            return reference(from: target)
+        }
+
         if first.lowercased() == "profile.php" {
             let id = components.queryItems?.first(where: { $0.name == "id" })?.value
                 ?? components.queryItems?.first(where: { $0.name == "username" })?.value
-            guard let id, isNumeric(id) else { return nil }
-            return numericReference(id)
+            guard let id else { return nil }
+            if isNumeric(id) { return numericReference(id) }
+            return referenceForHandle(id)
         }
 
         if first.lowercased() == "pages" || first.lowercased() == "people" {
-            if let id = path.last, isNumeric(id) {
-                return numericReference(id)
-            }
+            if let id = numericID(in: path) { return numericReference(id) }
             if path.count >= 2 {
-                return referenceForHandle(path[1])
+                if isValidHandle(path[1]) { return referenceForHandle(path[1]) }
+                return unresolvedReference(
+                    url: components.url?.absoluteString ?? input,
+                    code: path[1],
+                    prefix: "page"
+                )
             }
             return nil
         }
 
         if first.lowercased() == "pg" {
-            if let id = path.dropFirst().first(where: { isNumeric($0) }) {
-                return numericReference(id)
-            }
+            if let id = numericID(in: path) { return numericReference(id) }
             if path.count >= 2 {
-                return referenceForHandle(path[1])
+                if isValidHandle(path[1]) { return referenceForHandle(path[1]) }
+                return unresolvedReference(
+                    url: components.url?.absoluteString ?? input,
+                    code: path[1],
+                    prefix: "page"
+                )
+            }
+            return nil
+        }
+
+        // روابط الصفحات الجديدة: facebook.com/p/PageName-123456
+        if first.lowercased() == "p" {
+            if let id = numericID(in: path) { return numericReference(id) }
+            if path.count >= 2 {
+                return unresolvedReference(
+                    url: components.url?.absoluteString ?? input,
+                    code: path[1],
+                    prefix: "p"
+                )
             }
             return nil
         }
 
         let handle = first.hasPrefix("@") ? String(first.dropFirst()) : first
-        guard !reservedPaths.contains(handle.lowercased()), isValidHandle(handle) else { return nil }
-        return referenceForHandle(handle)
+        guard !reservedPaths.contains(handle.lowercased()) else { return nil }
+        if isValidHandle(handle) {
+            return referenceForHandle(handle)
+        }
+        if let id = numericID(in: [handle]) {
+            return numericReference(id)
+        }
+        return unresolvedReference(
+            url: components.url?.absoluteString ?? input,
+            code: handle,
+            prefix: "page"
+        )
+    }
+
+    private static func isFacebookHost(_ host: String) -> Bool {
+        host == "facebook.com" ||
+        host.hasSuffix(".facebook.com") ||
+        host == "fb.com" ||
+        host == "www.fb.com" ||
+        host == "fb.me" ||
+        host == "www.fb.me"
+    }
+
+    /// يستخرج رقم الصفحة من المسار، مثل `PageName-123456` أو
+    /// `اسم-الصفحة-123456`، مع تجاهل الأرقام القصيرة مثل السنة.
+    private static func numericID(in path: [String]) -> String? {
+        for value in path.reversed() {
+            if isNumeric(value), value.count >= 5 { return value }
+            if let range = value.range(of: #"(\d{5,})$"#, options: .regularExpression) {
+                return String(value[range])
+            }
+        }
+        return nil
+    }
+
+    /// مرجع مبدئي لرابط لا يحمل اسم صفحة واضحاً (مشاركة أو fb.me أو
+    /// رابط عربي). يُحل إلى الصفحة النهائية عند الجلب.
+    private static func unresolvedReference(
+        url: String,
+        code: String,
+        prefix: String
+    ) -> FacebookPageReference? {
+        guard !code.isEmpty else { return nil }
+        var safe = code
+            .replacingOccurrences(of: #"[^A-Za-z0-9]+"#, with: "_", options: .regularExpression)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "_"))
+            .lowercased()
+        if safe.isEmpty {
+            safe = stableCode(for: code)
+        }
+        guard !safe.isEmpty, let inputURL = URL(string: url) else { return nil }
+        let handle = String("\(prefix)_\(safe)".prefix(80))
+        return FacebookPageReference(
+            inputURL: inputURL,
+            handle: handle,
+            canonicalURL: url,
+            isNumericID: false,
+            needsResolution: true
+        )
+    }
+
+    /// بصمة ثابتة لا تتغير بين التشغيلات، بخلاف `hashValue`.
+    private static func stableCode(for value: String) -> String {
+        var hash: UInt64 = 14695981039346656037
+        for byte in value.utf8 {
+            hash ^= UInt64(byte)
+            hash = hash &* 1099511628211
+        }
+        return String(hash, radix: 16)
     }
 
     private static func referenceForHandle(_ raw: String) -> FacebookPageReference? {
@@ -139,7 +265,8 @@ enum FacebookPageParser {
             inputURL: URL(string: "https://www.facebook.com/\(handle)")!,
             handle: lowered,
             canonicalURL: "https://www.facebook.com/\(handle)",
-            isNumericID: false
+            isNumericID: false,
+            needsResolution: false
         )
     }
 
@@ -148,7 +275,8 @@ enum FacebookPageParser {
             inputURL: URL(string: "https://www.facebook.com/profile.php?id=\(id)")!,
             handle: id,
             canonicalURL: "https://www.facebook.com/profile.php?id=\(id)",
-            isNumericID: true
+            isNumericID: true,
+            needsResolution: false
         )
     }
 
@@ -180,22 +308,38 @@ enum FacebookPageParser {
         let userVanity = firstRegexGroup(#""userVanity"\s*:\s*"([^"]+)""#, in: html)
         let userID = firstRegexGroup(#""userID"\s*:\s*"([0-9]+)""#, in: html)
 
-        var handle = reference.handle
+        // قد يعيد فيسبوك صفحة المشاركة نفسها مع og:url للصفحة المقصودة
+        // بدل تحويل HTTP، فنستخرج مرجع الصفحة النهائي من og:url.
+        var effectiveReference = reference
+        if reference.needsResolution,
+           !pageURL.isEmpty,
+           let resolved = reference(from: pageURL),
+           !resolved.needsResolution {
+            effectiveReference = resolved
+        }
+
+        var handle = effectiveReference.handle
         if let userVanity, isValidHandle(userVanity), !isNumeric(userVanity) {
             handle = userVanity.lowercased()
-        } else if reference.isNumericID, let userID, isNumeric(userID) {
+        } else if let userID,
+                  isNumeric(userID),
+                  effectiveReference.isNumericID || reference.needsResolution {
             handle = userID
         }
 
-        var canonicalURL = reference.canonicalURL
-        if !reference.isNumericID,
+        // في الروابط التي تحتاج تحويلاً، استخدم الاسم النهائي المقروء من
+        // الصفحة بدل كود المشاركة المؤقت حتى يبقى معرّف الحساب مستقلاً.
+        let identityHandle = effectiveReference.needsResolution ? handle : effectiveReference.handle
+
+        var canonicalURL = effectiveReference.canonicalURL
+        if !effectiveReference.isNumericID,
            !pageURL.isEmpty,
            let url = URL(string: pageURL),
            let host = url.host?.lowercased(),
            host.contains("facebook.com"),
            !url.path.contains("/login") {
             canonicalURL = pageURL
-        } else if !reference.isNumericID {
+        } else if !effectiveReference.isNumericID, !effectiveReference.needsResolution {
             canonicalURL = "https://www.facebook.com/\(handle)"
         }
 
@@ -245,7 +389,7 @@ enum FacebookPageParser {
         let createdAtValue = createdAt ?? ISO8601DateFormatter.nabd.string(from: Date())
 
         let account = Account(
-            id: "direct-facebook-\(reference.handle.lowercased())",
+            id: "direct-facebook-\(identityHandle.lowercased())",
             platform: .facebook,
             handle: handle,
             displayName: displayName,
@@ -730,13 +874,16 @@ final class DirectFacebookService {
             candidates.append(url)
         }
         candidates.append(reference.inputURL.absoluteString)
-        if reference.isNumericID {
+        if reference.needsResolution {
+            // لا نضيف عنواناً مشتقاً من كود المشاركة؛ الرابط الأصلي وحده
+            // هو ما يعرف فيسبوك كيف يحوّله إلى الصفحة.
+        } else if reference.isNumericID {
             candidates.append("https://www.facebook.com/\(reference.handle)")
         } else {
             candidates.append("https://www.facebook.com/\(reference.handle)")
             candidates.append("https://m.facebook.com/\(reference.handle)")
+            candidates.append("https://web.facebook.com/\(reference.handle)")
         }
-        candidates.append("https://web.facebook.com/\(reference.handle)")
 
         var seen = Set<String>()
         var lastError: DirectFacebookError = .blocked
@@ -749,9 +896,17 @@ final class DirectFacebookService {
                     !page.html.contains("og:title") {
                     throw DirectFacebookError.blocked
                 }
+                // روابط المشاركة وfb.me والروابط العربية تُحوَّل إلى
+                // الصفحة النهائية قبل قراءة الأرقام وتثبيت المعرّف.
+                var parseReference = reference
+                if reference.needsResolution,
+                   let canonical = FacebookPageParser.reference(from: page.finalURL.absoluteString),
+                   !canonical.needsResolution {
+                    parseReference = canonical
+                }
                 return try FacebookPageParser.parse(
                     html: page.html,
-                    reference: reference,
+                    reference: parseReference,
                     createdAt: createdAt
                 )
             } catch let error as DirectFacebookError {
