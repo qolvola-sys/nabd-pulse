@@ -45,6 +45,7 @@ struct AccountsView: View {
     @State private var showAdd = false
     @State private var pendingDelete: Account?
     @State private var movingAccount: Account?
+    @State private var showFacebook = false
     #if MUTABAA
     @State private var groupEditor: GroupEditorRequest?
     #endif
@@ -88,7 +89,17 @@ struct AccountsView: View {
         ScrollView(showsIndicators: false) {
             VStack(spacing: 16) {
                 header
+                #if MUTABAA
+                if platform == .facebook && !store.isDirect {
+                    facebookLockedCard
+                }
+                #endif
                 summaryStrip
+                #if MUTABAA
+                if platform == .tiktok {
+                    facebookEntryCard
+                }
+                #endif
                 SearchField(text: $search)
                 sortChips
 
@@ -153,6 +164,13 @@ struct AccountsView: View {
             }
             .environmentObject(store)
         }
+        .fullScreenCover(isPresented: $showFacebook) {
+            ZStack {
+                AppBackground()
+                AccountsView(platform: .facebook)
+                    .environmentObject(store)
+            }
+        }
         #endif
         .confirmationDialog(
             "إزالة \(platform == .facebook ? "" : "@")\(pendingDelete?.handle ?? "")؟",
@@ -174,6 +192,96 @@ struct AccountsView: View {
     private var maxViews: Int64 {
         max(platformAccounts.map { $0.views24h }.max() ?? 1, 1)
     }
+
+    #if MUTABAA
+    private var facebookCount: Int {
+        store.accounts.filter { $0.platform == .facebook }.count
+    }
+
+    /// مدخل ظاهر دائماً داخل تبويب الحسابات، حتى لو كان شريط المساحات
+    /// مخفياً في الوضع التجريبي أو عند استخدام الخادم.
+    private var facebookEntryCard: some View {
+        Button {
+            store.haptic(.impact)
+            showFacebook = true
+        } label: {
+            HStack(spacing: 12) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 13, style: .continuous)
+                        .fill(Theme.cyan.opacity(0.13))
+                    Image(systemName: "globe")
+                        .font(.system(size: 17, weight: .bold))
+                        .foregroundColor(Theme.cyan)
+                }
+                .frame(width: 42, height: 42)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("صفحات فيسبوك")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundColor(Theme.text)
+                    Text("أضف الصفحات واقرأ المنشورات ومشاهدات الفيديو")
+                        .font(.system(size: 10))
+                        .foregroundColor(Theme.textTertiary)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                }
+
+                Spacer(minLength: 6)
+
+                if facebookCount > 0 {
+                    Text(Num.full(Int64(facebookCount)))
+                        .font(.system(size: 10, weight: .bold, design: .rounded))
+                        .foregroundColor(Theme.cyan)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill(Theme.cyan.opacity(0.12)))
+                }
+
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(Theme.textTertiary)
+            }
+            .padding(12)
+            .background(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(Theme.surface.opacity(0.8))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .strokeBorder(Theme.cyan.opacity(0.22), lineWidth: 1)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(PressableStyle(scale: 0.99))
+        .accessibilityIdentifier("accounts-open-facebook")
+    }
+
+    private var facebookLockedCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("فيسبوك يحتاج الوضع المباشر", systemImage: "exclamationmark.triangle.fill")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundColor(Theme.gold)
+
+            Text(store.isDemo
+                 ? "أنت في الوضع التجريبي. أوقفه لتقرأ أرقام صفحات فيسبوك الحقيقية."
+                 : "أنت تستخدم الخادم الخاص. صفحة فيسبوك تقرأ الصفحات العامة مباشرة دون خادم. حسابات الخادم تبقى محفوظة ويمكن الرجوع إليها.")
+                .font(.system(size: 10.5))
+                .foregroundColor(Theme.textSecondary)
+                .lineSpacing(3)
+                .multilineTextAlignment(.leading)
+
+            Button {
+                store.enableDirectMode()
+                store.showToast("تم تشغيل الوضع المباشر", .success)
+                store.haptic(.success)
+            } label: {
+                Label("تشغيل الوضع المباشر", systemImage: "bolt.fill")
+            }
+            .buttonStyle(GradientButtonStyle(height: 44))
+        }
+        .card(padding: 14)
+    }
+    #endif
 
     private func accountCard(_ account: Account) -> some View {
         AccountRow(account: account, maxViews: maxViews)
@@ -714,6 +822,8 @@ struct AccountsView: View {
                 .shadow(color: Theme.cyan.opacity(0.28), radius: 12, y: 6)
             }
             .buttonStyle(PressableStyle())
+            .disabled(platform == .facebook && !store.isDirect)
+            .opacity(platform == .facebook && !store.isDirect ? 0.45 : 1)
 
             if platform == .facebook {
                 Button {
@@ -862,8 +972,15 @@ struct AccountsView: View {
                     icon: platform == .facebook ? "globe" : "person.badge.plus",
                     title: platform == .facebook ? "ابدأ بإضافة صفحات فيسبوك" : "ابدأ بإضافة حساباتك",
                     message: emptyMessage,
-                    actionTitle: "إضافة روابط",
-                    action: { showAdd = true }
+                    actionTitle: platform == .facebook && !store.isDirect ? "تشغيل الوضع المباشر" : "إضافة روابط",
+                    action: {
+                        if platform == .facebook && !store.isDirect {
+                            store.enableDirectMode()
+                            store.showToast("تم تشغيل الوضع المباشر", .success)
+                        } else {
+                            showAdd = true
+                        }
+                    }
                 )
             }
         }

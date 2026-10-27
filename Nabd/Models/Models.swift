@@ -548,6 +548,8 @@ struct AddAccountsResponse: Codable {
     var skipped: [SkippedAccount]?
     var invalid: [String]?
     var accounts: [Account]?
+    /// أسباب تعذّر قراءة بعض الصفحات أو الحسابات بعد نجاح الإضافة.
+    var errors: [String]?
 }
 
 struct SyncResult: Codable {

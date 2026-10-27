@@ -57,6 +57,10 @@ struct AddAccountsView: View {
         parsed.filter { $0.handle == nil }.count
     }
 
+    private var facebookLocked: Bool {
+        platform == .facebook && !store.isDirect
+    }
+
     var body: some View {
         ZStack {
             AppBackground()
@@ -64,7 +68,11 @@ struct AddAccountsView: View {
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 16) {
                     header
-                    if store.isDemo { demoNotice }
+                    if facebookLocked {
+                        facebookLockedNotice
+                    } else if store.isDemo {
+                        demoNotice
+                    }
                     inputCard
                     if !validHandles.isEmpty { previewCard }
                     if let result { resultCard(result) }
@@ -139,6 +147,34 @@ struct AddAccountsView: View {
                 .foregroundColor(Theme.textSecondary)
                 .lineSpacing(3)
             Spacer(minLength: 0)
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 14).fill(Theme.gold.opacity(0.07)))
+        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Theme.gold.opacity(0.2), lineWidth: 1))
+    }
+
+    private var facebookLockedNotice: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(alignment: .top, spacing: 9) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 12))
+                    .foregroundColor(Theme.gold)
+                Text("إضافة صفحات فيسبوك تعمل في الوضع المباشر فقط، لأنها تقرأ الصفحات العامة دون خادم. حسابات الخادم تبقى محفوظة.")
+                    .font(.system(size: 11))
+                    .foregroundColor(Theme.textSecondary)
+                    .lineSpacing(3)
+                    .multilineTextAlignment(.leading)
+                Spacer(minLength: 0)
+            }
+
+            Button {
+                store.enableDirectMode()
+                store.showToast("تم تشغيل الوضع المباشر", .success)
+                store.haptic(.success)
+            } label: {
+                Label("تشغيل الوضع المباشر", systemImage: "bolt.fill")
+            }
+            .buttonStyle(GradientButtonStyle(height: 44))
         }
         .padding(12)
         .background(RoundedRectangle(cornerRadius: 14).fill(Theme.gold.opacity(0.07)))
@@ -281,7 +317,9 @@ struct AddAccountsView: View {
                         ? (platform == .facebook
                            ? "تم جلب المنشورات ومشاهدات الفيديو المتاحة علناً مباشرة من فيسبوك."
                            : "تم جلب المنشورات ومشاهدات آخر ٢٤ ساعة والتقييم الأسبوعي مباشرة من TikTok.")
-                        : "أُضيفت الحسابات وستُحدَّث أرقامها تلقائياً عند توفر اتصال \(platformName)."))
+                        : (platform == .facebook
+                           ? "أُضيفت الصفحة، لكن تعذّرت قراءة أرقامها الآن. اضغط «مزامنة» لإعادة المحاولة."
+                           : "أُضيفت الحسابات وستُحدَّث أرقامها تلقائياً عند توفر اتصال \(platformName).")))
                     .font(.system(size: 11))
                     .foregroundColor(Theme.textSecondary)
                     .lineSpacing(3)
@@ -359,6 +397,19 @@ struct AddAccountsView: View {
                     .font(.system(size: 10.5))
                     .foregroundColor(Theme.gold)
             }
+            if let errors = result.errors, !errors.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Label("تعذّرت قراءة بعض الصفحات", systemImage: "exclamationmark.triangle")
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundColor(Theme.gold)
+                    ForEach(errors.prefix(3), id: \.self) { message in
+                        Text(message)
+                            .font(.system(size: 9.5))
+                            .foregroundColor(Theme.textTertiary)
+                            .lineLimit(2)
+                    }
+                }
+            }
         }
         .card(padding: 15)
     }
@@ -399,8 +450,8 @@ struct AddAccountsView: View {
             }
         }
         .buttonStyle(GradientButtonStyle())
-        .disabled(acceptedHandles.isEmpty || isSubmitting || store.isDemo)
-        .opacity(store.isDemo ? 0.45 : 1)
+        .disabled(acceptedHandles.isEmpty || isSubmitting || store.isDemo || facebookLocked)
+        .opacity(store.isDemo || facebookLocked ? 0.45 : 1)
     }
 
     private var helpCard: some View {
@@ -435,6 +486,10 @@ struct AddAccountsView: View {
 
     private func submit() async {
         guard !acceptedHandles.isEmpty else { return }
+        guard !facebookLocked else {
+            errorText = "فيسبوك يعمل في الوضع المباشر. أوقف الخادم والوضع التجريبي ثم أعد المحاولة."
+            return
+        }
         let keepText = overflowCount > 0
         editorFocused = false
         isSubmitting = true
@@ -447,6 +502,8 @@ struct AddAccountsView: View {
                 result = response
                 if !keepText { text = "" }
             }
+        } else if platform == .facebook {
+            errorText = "تعذّرت إضافة صفحات فيسبوك. تأكد من الرابط والاتصال بالإنترنت ثم أعد المحاولة."
         } else if store.useServer {
             errorText = "لم نستطع إضافة الحسابات. تأكد من اتصال الخادم ثم أعد المحاولة."
         }

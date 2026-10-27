@@ -486,6 +486,20 @@ final class AppStore: ObservableObject {
         Task { await refresh(showSpinner: false) }
     }
 
+    /// يبدّل إلى القراءة المباشرة من TikTok وفيسبوك. تُستخدم من صفحة
+    /// فيسبوك عندما يكون الخادم أو الوضع التجريبي مفعّلاً، حتى يستطيع
+    /// المستخدم إضافة الصفحات دون البحث في الإعدادات.
+    func enableDirectMode() {
+        if demoMode { demoMode = false }
+        if useServer { useServer = false }
+        #if MUTABAA
+        if spaces.isEmpty {
+            seedSpacesIfNeeded(with: accounts)
+            saveDirectAccounts()
+        }
+        #endif
+    }
+
     private func applyModeChange() {
         if isDemo {
             loadDemo()
@@ -781,7 +795,7 @@ final class AppStore: ObservableObject {
             return await addDirect(links: links, platform: platform)
         }
         if platform == .facebook {
-            showToast("إضافة فيسبوك تعمل في الوضع المباشر", .info)
+            showToast("إضافة فيسبوك تعمل في الوضع المباشر — أوقف الخادم والوضع التجريبي أولاً", .info)
             return nil
         }
         guard let client else {
@@ -809,6 +823,7 @@ final class AppStore: ObservableObject {
         var created: [Account] = []
         var skipped: [SkippedAccount] = []
         var invalid: [String] = []
+        var failures: [String] = []
 
         for raw in links {
             guard let handle = Self.handle(from: raw, platform: platform) else {
@@ -882,10 +897,13 @@ final class AppStore: ObservableObject {
                 directVideos[fetched.videoCacheKey] = result.videos
                 created.append(fetched)
             } catch {
-                // نضيف الحساب بحالة انتظار بدل عرض خطأ. التحديث التالي سيكمل البيانات.
+                // نضيف الصفحة بحالة انتظار بدل إسقاطها، لكن نحتفظ بسبب
+                // التعذّر ونعرضه حتى لا تبدو الإضافة ناجحة دون أرقام.
+                let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                failures.append("\(handle): \(message)")
                 var pending = placeholder
                 pending.status = "pending"
-                pending.error = nil
+                pending.error = message
                 if let index = accounts.firstIndex(where: { $0.id == accountID }) {
                     accounts[index] = pending
                 }
@@ -901,24 +919,29 @@ final class AppStore: ObservableObject {
         saveDirectAccounts()
 
         let ready = created.filter { $0.status == "public" || $0.status == "ok" }.count
+        let unit = platform == .facebook ? "صفحة" : "حساب"
         if !created.isEmpty {
             if ready == 0 {
-                showToast("تمت الإضافة — ستُحدَّث الأرقام تلقائياً", .info)
+                showToast("أُضيفت \(created.count) \(unit) — تعذّرت قراءة الأرقام الآن", .info)
             } else if ready < created.count {
-                showToast("تمت إضافة \(created.count) حساب — بعضها سيُحدَّث تلقائياً", .info)
+                showToast("أُضيفت \(created.count) \(unit) — بعضها سيُحدَّث تلقائياً", .info)
             } else {
-                showToast("تمت إضافة \(created.count) حساب", .success)
+                showToast("تمت إضافة \(created.count) \(unit)", .success)
             }
-            haptic(.success)
+            haptic(ready > 0 ? .success : .impact)
         } else if !invalid.isEmpty {
-            showToast("لم نتعرف على أي رابط صالح", .info)
+            showToast(failures.first ?? "لم نتعرف على أي رابط صالح", .error)
+            haptic(.error)
+        } else if !skipped.isEmpty {
+            showToast(platform == .facebook ? "الصفحات مضافة مسبقاً" : "الحسابات مضافة مسبقاً", .info)
         }
 
         return AddAccountsResponse(
             created: created,
             skipped: skipped,
             invalid: invalid,
-            accounts: accounts
+            accounts: accounts,
+            errors: failures.isEmpty ? nil : failures
         )
     }
 

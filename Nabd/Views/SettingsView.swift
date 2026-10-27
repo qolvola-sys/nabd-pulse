@@ -10,6 +10,7 @@ struct SettingsView: View {
     @State private var report: ConnectionReport?
     @State private var shareFile: ShareFile?
     @State private var showSpaces = false
+    @State private var showFacebook = false
     @State private var didLoad = false
 
     var body: some View {
@@ -17,6 +18,7 @@ struct SettingsView: View {
             VStack(spacing: 16) {
                 header
                 #if MUTABAA
+                facebookCard
                 if store.spacesEnabled {
                     spacesCard
                 }
@@ -52,6 +54,15 @@ struct SettingsView: View {
             EmptyView()
             #endif
         }
+        #if MUTABAA
+        .fullScreenCover(isPresented: $showFacebook) {
+            ZStack {
+                AppBackground()
+                AccountsView(platform: .facebook)
+                    .environmentObject(store)
+            }
+        }
+        #endif
     }
 
     // MARK: - الرأس
@@ -69,6 +80,79 @@ struct SettingsView: View {
     }
 
     #if MUTABAA
+    // MARK: - فيسبوك
+
+    private var facebookCount: Int {
+        store.accounts.filter { $0.platform == .facebook }.count
+    }
+
+    /// مدخل دائم لفيسبوك. لا يعتمد على شريط المساحات حتى يظل ظاهراً
+    /// في الوضع التجريبي أو عند استخدام الخادم.
+    private var facebookCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Label("صفحات فيسبوك", systemImage: "globe")
+                    .font(.system(size: 12.5, weight: .bold))
+                    .foregroundColor(Theme.text)
+                Spacer()
+                Chip(text: "\(facebookCount) صفحة", color: Theme.cyan)
+            }
+
+            Button {
+                store.haptic(.selection)
+                showFacebook = true
+            } label: {
+                HStack(spacing: 11) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(Theme.cyan.opacity(0.13))
+                        Image(systemName: "globe")
+                            .font(.system(size: 17, weight: .bold))
+                            .foregroundColor(Theme.cyan)
+                    }
+                    .frame(width: 40, height: 40)
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("إضافة صفحات ومشاهدات الفيديو")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(Theme.text)
+                        Text(store.isDirect
+                             ? "افتح صفحة فيسبوك لإضافة الصفحات وقراءة المنشورات."
+                             : "يعمل في الوضع المباشر — افتح الصفحة للتبديل بضغطة واحدة.")
+                            .font(.system(size: 10))
+                            .foregroundColor(store.isDirect ? Theme.textSecondary : Theme.gold)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                    }
+
+                    Spacer(minLength: 6)
+
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(Theme.textTertiary)
+                }
+                .padding(11)
+                .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Theme.bgSoft))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .strokeBorder(
+                            store.isDirect ? Theme.cyan.opacity(0.24) : Theme.gold.opacity(0.28),
+                            lineWidth: 1
+                        )
+                )
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(PressableStyle(scale: 0.99))
+            .accessibilityIdentifier("settings-open-facebook")
+
+            Text("تُقرأ الصفحات العامة دون تسجيل دخول: الاسم والمتابعون والمنشورات، ومشاهدات الفيديو المتاحة علناً. المنشورات النصية والصور لا تكشف مشاهدات.")
+                .font(.system(size: 10))
+                .foregroundColor(Theme.textTertiary)
+                .lineSpacing(3)
+        }
+        .card(padding: 16)
+    }
+
     // MARK: - المساحات
 
     private var spacesCard: some View {
@@ -496,6 +580,15 @@ struct SettingsView: View {
 
     // MARK: - حول
 
+    private var appVersion: String {
+        let short = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
+        if let short, !short.isEmpty, let build, !build.isEmpty {
+            return "\(short) (\(build))"
+        }
+        return short ?? build ?? ""
+    }
+
     private var aboutCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 11) {
@@ -512,9 +605,11 @@ struct SettingsView: View {
                     Text(AppVariant.name)
                         .font(.system(size: 15, weight: .bold, design: .rounded))
                         .foregroundColor(Theme.text)
-                    Text(AppVariant.readsEveryWeeklyPost
-                         ? "تحليلات TikTok لعدة حسابات · 1.1.0"
-                         : "تحليلات TikTok لعدة حسابات · 1.2.0")
+                    Text(
+                        (AppVariant.readsEveryWeeklyPost
+                         ? "تحليلات TikTok وفيسبوك لعدة حسابات"
+                         : "تحليلات TikTok لعدة حسابات") + " · \(appVersion)"
+                    )
                         .font(.system(size: 10.5))
                         .foregroundColor(Theme.textTertiary)
                 }
