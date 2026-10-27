@@ -313,7 +313,7 @@ enum FacebookPageParser {
         var effectiveReference = reference
         if reference.needsResolution,
            !pageURL.isEmpty,
-           let resolved = reference(from: pageURL),
+           let resolved = FacebookPageParser.reference(from: pageURL),
            !resolved.needsResolution {
             effectiveReference = resolved
         }
