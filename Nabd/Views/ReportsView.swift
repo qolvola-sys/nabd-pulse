@@ -693,6 +693,11 @@ struct ReportsView: View {
                 .font(.system(size: 9.5))
                 .foregroundColor(Theme.textTertiary)
                 .lineSpacing(3)
+
+            Text("أعمدة ورقة الصفحات: التسلسل، اسم الصفحة، البرامج، عدد النشر، عدد المشاهدات، الملاحظات، الروابط — بدون عمود «العدد المطلوب». الملفات القديمة المصدّرة قبل هذا الإصدار تحتفظ بتنسيقها السابق؛ أنشئ تقريراً جديداً ليأخذ التنسيق الجديد.")
+                .font(.system(size: 9.5))
+                .foregroundColor(Theme.textTertiary)
+                .lineSpacing(3)
         }
         .padding(.horizontal, 4)
     }

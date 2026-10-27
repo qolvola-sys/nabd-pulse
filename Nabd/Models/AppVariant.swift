@@ -24,4 +24,20 @@ enum AppVariant {
             ? "يقرأ «\(name)» كل منشورات آخر ٧ أيام؛ وإذا تعذّر الوصول لبعضها تُحسب النتيجة من المنشورات المحمّلة."
             : "النتيجة من أحدث ١٠ منشورات فقط؛ الحسابات كثيفة النشر تحتاج ربطاً رسمياً لقراءة كل المنشورات."
     }
+
+    /// رقم الإصدار الحقيقي من Info.plist، حتى يتحقق المستخدم من النسخة
+    /// المثبّتة بدل الاعتماد على نص ثابت قد يقدم.
+    static var version: String {
+        let info = Bundle.main.infoDictionary
+        let short = info?["CFBundleShortVersionString"] as? String ?? ""
+        let build = info?["CFBundleVersion"] as? String ?? ""
+        if !short.isEmpty && !build.isEmpty {
+            return "\(short) (\(build))"
+        }
+        return short.isEmpty ? build : short
+    }
+
+    static var versionLabel: String {
+        version.isEmpty ? "" : "الإصدار \(version)"
+    }
 }

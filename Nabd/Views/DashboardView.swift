@@ -176,6 +176,16 @@ struct DashboardView: View {
                     Text(AppVariant.name)
                         .font(.system(size: 28, weight: .heavy, design: .rounded))
                         .foregroundColor(Theme.text)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                    Text(AppVariant.version)
+                        .font(.system(size: 8.5, weight: .bold, design: .rounded))
+                        .foregroundColor(Theme.cyan)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(Theme.cyan.opacity(0.10)))
+                        .overlay(Capsule().strokeBorder(Theme.cyan.opacity(0.2), lineWidth: 1))
+                        .fixedSize()
                     Circle()
                         .fill(statusColor)
                         .frame(width: 7, height: 7)
@@ -183,6 +193,7 @@ struct DashboardView: View {
                     Text(store.source.label)
                         .font(.system(size: 10.5, weight: .medium))
                         .foregroundColor(Theme.textTertiary)
+                        .lineLimit(1)
                 }
                 #if MUTABAA
                 if store.spacesEnabled {

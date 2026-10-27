@@ -69,9 +69,19 @@ struct SettingsView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("الإعدادات")
-                .font(.system(size: 26, weight: .heavy, design: .rounded))
-                .foregroundColor(Theme.text)
+            HStack(spacing: 8) {
+                Text("الإعدادات")
+                    .font(.system(size: 26, weight: .heavy, design: .rounded))
+                    .foregroundColor(Theme.text)
+                Text(AppVariant.versionLabel)
+                    .font(.system(size: 9.5, weight: .bold, design: .rounded))
+                    .foregroundColor(Theme.cyan)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(Theme.cyan.opacity(0.12)))
+                    .overlay(Capsule().strokeBorder(Theme.cyan.opacity(0.22), lineWidth: 1))
+                Spacer(minLength: 0)
+            }
             Text("اختر مصدر البيانات وتحكّم في طريقة المزامنة")
                 .font(.system(size: 11.5))
                 .foregroundColor(Theme.textSecondary)
@@ -580,17 +590,18 @@ struct SettingsView: View {
 
     // MARK: - حول
 
-    private var appVersion: String {
-        let short = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
-        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
-        if let short, !short.isEmpty, let build, !build.isEmpty {
-            return "\(short) (\(build))"
-        }
-        return short ?? build ?? ""
-    }
-
     private var aboutCard: some View {
         VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 9) {
+                Label("حول", systemImage: "info.circle.fill")
+                    .font(.system(size: 12.5, weight: .bold))
+                    .foregroundColor(Theme.text)
+                Spacer()
+                Chip(text: AppVariant.versionLabel, color: Theme.cyan)
+            }
+
+            HairlineDivider()
+
             HStack(spacing: 11) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -608,7 +619,7 @@ struct SettingsView: View {
                     Text(
                         (AppVariant.readsEveryWeeklyPost
                          ? "تحليلات TikTok وفيسبوك لعدة حسابات"
-                         : "تحليلات TikTok لعدة حسابات") + " · \(appVersion)"
+                         : "تحليلات TikTok لعدة حسابات") + " · \(AppVariant.version)"
                     )
                         .font(.system(size: 10.5))
                         .foregroundColor(Theme.textTertiary)

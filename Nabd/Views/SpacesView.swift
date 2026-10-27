@@ -21,19 +21,21 @@ struct SpacesBar: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            ScrollViewReader { proxy in
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 7) {
-                        ForEach(store.spaces) { space in
-                            spaceChip(space)
-                                .id(space.id)
+            if store.spacesEnabled {
+                ScrollViewReader { proxy in
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 7) {
+                            ForEach(store.spaces) { space in
+                                spaceChip(space)
+                                    .id(space.id)
+                            }
                         }
+                        .padding(.horizontal, 1)
                     }
-                    .padding(.horizontal, 1)
-                }
-                .onChange(of: store.activeSpaceID) { value in
-                    withAnimation(.easeInOut(duration: 0.28)) {
-                        proxy.scrollTo(value, anchor: .center)
+                    .onChange(of: store.activeSpaceID) { value in
+                        withAnimation(.easeInOut(duration: 0.28)) {
+                            proxy.scrollTo(value, anchor: .center)
+                        }
                     }
                 }
             }
@@ -71,27 +73,50 @@ struct SpacesBar: View {
             .buttonStyle(PressableStyle(scale: 0.97))
             .accessibilityIdentifier("open-facebook")
 
-            Menu {
-                Button {
-                    newSpaceName = ""
-                    showNewSpace = true
+            if store.spacesEnabled {
+                Menu {
+                    Button {
+                        newSpaceName = ""
+                        showNewSpace = true
+                    } label: {
+                        Label("مساحة جديدة", systemImage: "plus.circle")
+                    }
+                    Button {
+                        showManager = true
+                    } label: {
+                        Label("إدارة المساحات", systemImage: "slider.horizontal.3")
+                    }
                 } label: {
-                    Label("مساحة جديدة", systemImage: "plus.circle")
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundColor(Theme.textSecondary)
+                        .frame(width: 38, height: 38)
+                        .background(Circle().fill(Theme.surface))
+                        .overlay(Circle().strokeBorder(Theme.border, lineWidth: 1))
                 }
-                Button {
-                    showManager = true
-                } label: {
-                    Label("إدارة المساحات", systemImage: "slider.horizontal.3")
+                .buttonStyle(PressableStyle())
+            } else {
+                Spacer(minLength: 0)
+
+                HStack(spacing: 5) {
+                    Image(systemName: store.isDemo ? "flask.fill" : "server.rack")
+                        .font(.system(size: 9.5, weight: .bold))
+                    Text(store.isDemo ? "تجريبي" : "خادم")
+                        .font(.system(size: 9.5, weight: .bold))
                 }
-            } label: {
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundColor(Theme.textSecondary)
-                    .frame(width: 38, height: 38)
-                    .background(Circle().fill(Theme.surface))
-                    .overlay(Circle().strokeBorder(Theme.border, lineWidth: 1))
+                .foregroundColor(store.isDemo ? Theme.gold : Theme.cyan)
+                .padding(.horizontal, 8)
+                .frame(height: 38)
+                .background(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(Theme.surface)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .strokeBorder(Theme.border, lineWidth: 1)
+                )
+                .accessibilityLabel(store.isDemo ? "الوضع التجريبي" : "وضع الخادم")
             }
-            .buttonStyle(PressableStyle())
         }
         .padding(6)
         .background(

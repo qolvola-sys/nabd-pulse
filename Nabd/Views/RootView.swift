@@ -146,7 +146,9 @@ struct RootView: View {
 
     private var spacesTopInsetEnabled: Bool {
         #if MUTABAA
-        return store.spacesEnabled
+        // شريط فيسبوك يبقى ظاهراً دائماً في «المتابعة»، حتى في وضع
+        // الخادم أو التجريبي، لأن هذه الأوضاع كانت تخفي المدخل سابقاً.
+        return true
         #else
         return false
         #endif
