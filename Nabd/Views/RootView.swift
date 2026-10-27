@@ -53,6 +53,8 @@ struct RootView: View {
     #endif
     @Environment(\.scenePhase) private var scenePhase
     @State private var tab: AppTab
+    @State private var showWhatsNew = false
+    @State private var showFacebookFromWhatsNew = false
     #if MUTABAA
     private let scheduleTimer = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
     #endif
@@ -120,6 +122,7 @@ struct RootView: View {
         .onAppear {
             store.bootstrap()
             runReportsCheck()
+            showWhatsNewIfNeeded()
         }
         .onChange(of: scenePhase) { phase in
             if phase == .active {
@@ -131,7 +134,34 @@ struct RootView: View {
         .onReceive(scheduleTimer) { _ in
             runReportsCheck()
         }
+        .alert("جديد في \(AppVariant.version)", isPresented: $showWhatsNew) {
+            Button("فتح فيسبوك") {
+                showFacebookFromWhatsNew = true
+            }
+            Button("حسناً", role: .cancel) {}
+        } message: {
+            Text("تم تثبيت هذه النسخة بنجاح.\n\n• زر «فيسبوك» ظاهر دائماً أعلى الشاشة، وبطاقة «صفحات فيسبوك» في الإعدادات والحسابات.\n• التقارير الجديدة بسبعة أعمدة فقط: بدون عمود «العدد المطلوب».\n\nملاحظة: ملفات Excel القديمة تحتفظ بتنسيقها؛ أنشئ تقريراً جديداً بعد التحديث.")
+        }
+        .fullScreenCover(isPresented: $showFacebookFromWhatsNew) {
+            ZStack {
+                AppBackground()
+                AccountsView(platform: .facebook)
+                    .environmentObject(store)
+            }
+        }
         #endif
+    }
+
+    /// يعرض تنبيهاً مرة واحدة بعد تثبيت نسخة جديدة، ليتأكد المستخدم
+    /// أن التحديث وصل فعلاً وليس نسخة قديمة.
+    private func showWhatsNewIfNeeded() {
+        let key = "nabd.lastSeenVersion"
+        let current = AppVariant.version
+        guard !current.isEmpty else { return }
+        if UserDefaults.standard.string(forKey: key) != current {
+            UserDefaults.standard.set(current, forKey: key)
+            showWhatsNew = true
+        }
     }
 
     /// التوليد التلقائي لا يعمل في الخلفية على iOS. نفحص الموعد عند فتح
