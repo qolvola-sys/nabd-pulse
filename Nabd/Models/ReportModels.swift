@@ -360,7 +360,10 @@ struct ReportDocument: Identifiable, Codable, Hashable {
             return "لا توجد صفحات TikTok"
         }
         if isFullyExact {
-            return "كل أرقام TikTok دقيقة ١٠٠٪"
+            if manualRows.isEmpty {
+                return "كل أرقام TikTok دقيقة ١٠٠٪"
+            }
+            return "كل أرقام TikTok دقيقة ١٠٠٪ · \(ReportNumber.full(Int64(manualRows.count))) صفحة إدخال يدوي"
         }
         if !incompleteRows.isEmpty {
             return "\(ReportNumber.full(Int64(incompleteRows.count))) صفحة تحتاج إعادة قراءة"

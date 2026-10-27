@@ -556,18 +556,20 @@ struct ReportsView: View {
     }
 
     private func shortQuality(_ document: ReportDocument) -> String {
-        if document.isFullyExact { return "دقيق ١٠٠٪" }
         if !document.incompleteRows.isEmpty { return "يحتاج مراجعة" }
         if !document.approximateRows.isEmpty { return "مقرّب" }
-        if !document.manualRows.isEmpty { return "يدوي" }
+        if !document.manualRows.isEmpty {
+            return document.isFullyExact ? "دقيق + يدوي" : "يدوي"
+        }
+        if document.isFullyExact { return "دقيق ١٠٠٪" }
         return "—"
     }
 
     private func reportTint(_ document: ReportDocument) -> Color {
-        if document.isFullyExact { return Theme.green }
         if !document.incompleteRows.isEmpty { return Theme.red }
         if !document.approximateRows.isEmpty { return Theme.gold }
         if !document.manualRows.isEmpty { return Theme.violet }
+        if document.isFullyExact { return Theme.green }
         return Theme.textSecondary
     }
 

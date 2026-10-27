@@ -163,8 +163,8 @@ struct ReportEditorView: View {
                     .foregroundColor(Theme.text)
                 Spacer()
                 Chip(
-                    text: draft.isFullyExact ? "دقيق ١٠٠٪" : "راجع الأرقام",
-                    color: draft.isFullyExact ? Theme.green : qualityTint
+                    text: qualityChipText,
+                    color: qualityTint
                 )
             }
 
@@ -183,11 +183,22 @@ struct ReportEditorView: View {
     }
 
     private var qualityTint: Color {
-        if draft.isFullyExact { return Theme.green }
         if !draft.incompleteRows.isEmpty { return Theme.red }
         if !draft.approximateRows.isEmpty { return Theme.gold }
         if !draft.manualRows.isEmpty { return Theme.violet }
+        if draft.isFullyExact { return Theme.green }
         return Theme.textSecondary
+    }
+
+    private var qualityChipText: String {
+        if !draft.incompleteRows.isEmpty || !draft.approximateRows.isEmpty {
+            return "راجع الأرقام"
+        }
+        if !draft.manualRows.isEmpty {
+            return draft.isFullyExact ? "دقيق + يدوي" : "يدوي"
+        }
+        if draft.isFullyExact { return "دقيق ١٠٠٪" }
+        return "لا توجد أرقام"
     }
 
     private func metric(value: String, label: String, tint: Color) -> some View {
