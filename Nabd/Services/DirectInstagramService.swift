@@ -244,28 +244,34 @@ final class DirectInstagramService {
         // ٠) صفحة التضمين العامة أولاً: لا تحتاج كوكيز ولا تسجيل دخول،
         // وتعرض الملف وآخر منشوراته مع الإعجابات الحقيقية. البدء بها يمنع
         // طلبات الواجهة من استنفاد حصة الشبكة وحجب القراءة كلها.
-        var profileOnly: DirectInstagramResult?
+        var best: DirectInstagramResult?
         if let embedResult = try? await fetchEmbed(reference: reference, createdAt: createdAt) {
-            if !embedResult.videos.isEmpty { return embedResult }
-            profileOnly = embedResult
+            // صفحة التضمين لا تنشر مشاهدات الفيديو. إن كانت كل مشاهدات
+            // الفيديو فيها معروفة فعلًا فلا داعي لمزيد من الطلبات.
+            let hasVideoViews = embedResult.videos.contains {
+                $0.isVideo && $0.views > 0 && $0.viewsExact
+            }
+            if !embedResult.videos.isEmpty && hasVideoViews { return embedResult }
+            best = embedResult
         }
 
         // ١) واجهة الويب العامة: أدق أرقام ومشاهدات الفيديو عندما تسمح.
+        // تُجرَّب حتى لو نجح التضمين، لأن التضمين يعطي الإعجابات فقط.
         await warmUpIfNeeded()
         if let apiResult = try? await fetchAPI(reference: reference, createdAt: createdAt) {
             if !apiResult.videos.isEmpty { return apiResult }
             // الملف قُرئ لكن المنشورات لم تُرجع: نجرّب صفحة الحساب قبل الاكتفاء به.
-            if profileOnly == nil { profileOnly = apiResult }
+            if best == nil || (best?.videos.isEmpty ?? true) { best = apiResult }
         }
 
         // ٢) صفحة الحساب وبياناتها المدمجة، ثم وسوم og كحد أدنى.
         if let htmlResult = try? await fetchHTML(reference: reference, createdAt: createdAt) {
             if !htmlResult.videos.isEmpty { return htmlResult }
-            if profileOnly == nil { profileOnly = htmlResult }
+            if best == nil || (best?.videos.isEmpty ?? true) { best = htmlResult }
         }
 
-        // لا منشورات من أي مصدر: نعيد ملف الحساب إن قُرئ بدل إسقاطه.
-        if let profileOnly { return profileOnly }
+        // لا منشورات من أي مصدر: نعيد أفضل ما قُرئ بدل إسقاطه.
+        if let best { return best }
 
         throw DirectInstagramError.blocked
     }
