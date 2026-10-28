@@ -12,6 +12,7 @@ struct AccountDetailView: View {
     @State private var isLoading = true
     @State private var confirmDelete = false
     @State private var isSyncing = false
+    @State private var didCopyDiagnostics = false
 
     private var current: Account { detail ?? account }
 
@@ -273,6 +274,25 @@ struct AccountDetailView: View {
                 }
                 .padding(.horizontal, 8)
                 .textSelection(.enabled)
+
+                // ينسخ تقريراً كاملاً (رمز كل مصدر وأول سطر من كل استجابة)
+                // حتى نعرف إن كانت الصفحة الواصلة هي صفحة إنستغرام فعلاً.
+                Button {
+                    UIPasteboard.general.string = DirectInstagramService.shared.report(for: current.handle)
+                    didCopyDiagnostics = true
+                    Task {
+                        try? await Task.sleep(nanoseconds: 2_500_000_000)
+                        didCopyDiagnostics = false
+                    }
+                } label: {
+                    Label(
+                        didCopyDiagnostics ? "تم النسخ — أرسله في المحادثة" : "نسخ التشخيص الكامل",
+                        systemImage: didCopyDiagnostics ? "checkmark.circle.fill" : "doc.on.doc"
+                    )
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundColor(didCopyDiagnostics ? Theme.green : Theme.cyan)
+                }
+                .buttonStyle(.plain)
             }
         }
         .frame(maxWidth: .infinity)

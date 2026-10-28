@@ -220,6 +220,42 @@ final class DirectInstagramService {
         relayDetails[handle.lowercased()] ?? ""
     }
 
+    /// عيّنات مختصرة من آخر الاستجابات (أول سطر من كل واحدة). تُستخدم
+    /// لمعرفة ما إذا كانت الصفحة الواصلة هي صفحة إنستغرام فعلاً أم
+    /// صفحة حجب/تسجيل دخول تعيد رمز 200 أيضاً.
+    private var samples: [String: [String]] = [:]
+
+    private func recordSample(_ line: String, for handle: String) {
+        var list = samples[handle.lowercased()] ?? []
+        list.append(line)
+        if list.count > 8 { list.removeFirst(list.count - 8) }
+        samples[handle.lowercased()] = list
+    }
+
+    private func sample(name: String, status: Int, body: String) -> String {
+        let head = body
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\r", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .prefix(150)
+        let hasJSON = body.contains("contextJSON")
+        let hasLogin = body.contains("loginForm") || body.contains("Log in to Instagram")
+        let hasConsent = body.contains("consent.google") || body.contains("Before you continue")
+        return "\(name) \(status) \(body.count)B ctx=\(hasJSON ? 1 : 0) login=\(hasLogin ? 1 : 0) consent=\(hasConsent ? 1 : 0) head=\(head)"
+    }
+
+    /// تقرير كامل قابل للنسخ، يرسله المستخدم عند تعذّر القراءة.
+    func report(for handle: String) -> String {
+        let key = handle.lowercased()
+        var lines: [String] = []
+        lines.append("app=\(AppVariant.version)")
+        lines.append("handle=@\(handle)")
+        lines.append("trail=\(diagnostics[key] ?? "-")")
+        lines.append("relay=\(relayDetails[key] ?? "-")")
+        lines.append(contentsOf: samples[key] ?? ["no samples"])
+        return lines.joined(separator: "\n")
+    }
+
     private func note(_ text: String, for handle: String) {
         diagnostics[handle.lowercased()] = text
     }
@@ -265,6 +301,7 @@ final class DirectInstagramService {
         // وتعرض الملف وآخر منشوراته مع الإعجابات الحقيقية. البدء بها يمنع
         // طلبات الواجهة من استنفاد حصة الشبكة وحجب القراءة كلها.
         let key = reference.handle.lowercased()
+        samples[key] = []
         var trail: [String] = []
         var best: DirectInstagramResult?
         do {
@@ -500,7 +537,7 @@ final class DirectInstagramService {
         guard !handle.isEmpty else { throw DirectInstagramError.invalidLink }
 
         var urls: [URL] = []
-        for suffix in ["embed/", "embed"] {
+        for suffix in ["embed/", "embed", "embed/captioned/"] {
             if let url = URL(string: "https://www.instagram.com/\(handle)/\(suffix)") {
                 urls.append(url)
             }
@@ -552,16 +589,17 @@ final class DirectInstagramService {
         request.setValue("https://www.instagram.com/\(handle)/", forHTTPHeaderField: "Referer")
         request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
         request.setValue("1", forHTTPHeaderField: "Upgrade-Insecure-Requests")
-        // ترويسات متصفح حقيقية تقلّل احتمال معاملة الطلب كزاحف.
-        request.setValue("none", forHTTPHeaderField: "Sec-Fetch-Site")
-        request.setValue("navigate", forHTTPHeaderField: "Sec-Fetch-Mode")
-        request.setValue("document", forHTTPHeaderField: "Sec-Fetch-Dest")
-        request.setValue("?0", forHTTPHeaderField: "Sec-Fetch-User")
+        // لا نرسل ترويسات Sec-Fetch* لأن Safari لا يرسلها أبداً؛ إرسالها مع
+        // معرّف Safari يجعل الطلب يبدو آلياً فيُرد بصفحة محدودة.
 
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw DirectInstagramError.badResponse }
         // نحفظ الرمز كي يظهر في سطر التشخيص (429 مقابل حجب مقابل مهلة).
         embedStatusCode = http.statusCode
+        recordSample(
+            sample(name: "embed", status: http.statusCode, body: String(data: data, encoding: .utf8) ?? ""),
+            for: handle
+        )
         if http.statusCode == 404 { throw DirectInstagramError.notFound }
         guard (200..<300).contains(http.statusCode),
               let html = String(data: data, encoding: .utf8),
@@ -691,6 +729,7 @@ final class DirectInstagramService {
 
     private func fetchHTML(reference: InstagramProfileReference, createdAt: String?) async throws -> DirectInstagramResult {
         let page = try await load(reference.inputURL)
+        recordSample(sample(name: "profile", status: 200, body: page.html), for: reference.handle)
         return try parseProfileHTML(page.html, reference: reference, createdAt: createdAt)
     }
 
@@ -702,9 +741,11 @@ final class DirectInstagramService {
         guard !handle.isEmpty else { throw DirectInstagramError.invalidLink }
 
         if let embedURL = URL(string: "https://www.instagram.com/\(handle)/embed/"),
-           let html = try? await WebPageLoader.shared.html(from: embedURL, userAgent: userAgent, timeout: 15),
-           let context = embedContext(in: html) {
-            return try makeEmbedResult(context: context, reference: reference, createdAt: createdAt)
+           let html = try? await WebPageLoader.shared.html(from: embedURL, userAgent: userAgent, timeout: 15) {
+            recordSample(sample(name: "web", status: 200, body: html), for: handle)
+            if let context = embedContext(in: html) {
+                return try makeEmbedResult(context: context, reference: reference, createdAt: createdAt)
+            }
         }
 
         guard let profileURL = URL(string: "https://www.instagram.com/\(handle)/") else {
@@ -739,6 +780,7 @@ final class DirectInstagramService {
         if let url = URL(string: "https://r.jina.ai/\(raw)") {
             do {
                 let (status, body) = try await relayGet(url, accept: "text/html")
+                recordSample(sample(name: "jina", status: status, body: body), for: key)
                 if let context = embedContext(in: body) {
                     let result = try makeEmbedResult(context: context, reference: reference, createdAt: createdAt)
                     return success("jina", result)
@@ -756,6 +798,7 @@ final class DirectInstagramService {
         if let url = URL(string: "https://www-instagram-com.translate.goog/\(handle)/embed/?_x_tr_sl=auto&_x_tr_tl=en&_x_tr_hl=en") {
             do {
                 let (status, body) = try await relayGet(url, accept: "text/html")
+                recordSample(sample(name: "google", status: status, body: body), for: key)
                 if let context = embedContext(in: body) {
                     let result = try makeEmbedResult(context: context, reference: reference, createdAt: createdAt)
                     return success("google", result)
@@ -778,6 +821,7 @@ final class DirectInstagramService {
         if let url = components?.url {
             do {
                 let (status, body) = try await relayGet(url, accept: "application/json")
+                recordSample(sample(name: "micro", status: status, body: body), for: key)
                 if let data = body.data(using: .utf8),
                    let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                    let payload = root["data"] as? [String: Any],
