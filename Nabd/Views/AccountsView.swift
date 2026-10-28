@@ -758,6 +758,22 @@ struct AccountsView: View {
             && platformAccounts.contains { $0.status == "pending" }
     }
 
+    /// على إنستغرام قد نقرأ المنشورات والإعجابات دون أن يكشف الموقع
+    /// مشاهدات الفيديو. في هذه الحالة نعرض «—» بدل صفر مضلل.
+    private var platformViewsUnavailable: Bool {
+        if platformNumbersUnavailable { return true }
+        guard platform == .instagram else { return false }
+        return platformSummary.views24h == 0
+            && !(platformSummary.dailyComplete && platformSummary.dailyViewsExact)
+    }
+
+    private var platformWeeklyViewsUnavailable: Bool {
+        if platformNumbersUnavailable { return true }
+        guard platform == .instagram else { return false }
+        return platformSummary.weeklyViews == 0
+            && !(platformSummary.weeklyComplete && platformSummary.weeklyViewsExact)
+    }
+
     private var posts24hText: String {
         if platformNumbersUnavailable { return "—" }
         return platformSummary.dailyComplete
@@ -766,7 +782,7 @@ struct AccountsView: View {
     }
 
     private var views24hText: String {
-        if platformNumbersUnavailable { return "—" }
+        if platformViewsUnavailable { return "—" }
         return Num.maybeApprox(
             platformSummary.views24h,
             exact: platformSummary.dailyComplete && platformSummary.dailyViewsExact
@@ -774,7 +790,7 @@ struct AccountsView: View {
     }
 
     private var weeklyViewsText: String {
-        if platformNumbersUnavailable { return "—" }
+        if platformWeeklyViewsUnavailable { return "—" }
         return Num.maybeApprox(
             platformSummary.weeklyViews,
             exact: platformSummary.weeklyComplete && platformSummary.weeklyViewsExact
@@ -782,7 +798,7 @@ struct AccountsView: View {
     }
 
     private var weeklyScoreText: String {
-        if platformNumbersUnavailable { return "—" }
+        if platformWeeklyViewsUnavailable { return "—" }
         let exact = platformSummary.weeklyComplete && platformSummary.weeklyViewsExact
         return Num.score(platformSummary.weeklyScore, exact: exact) + "%"
     }
@@ -1083,8 +1099,13 @@ struct AccountRow: View {
         account.status == "pending" && account.fetchedVideos == 0
     }
 
+    /// إنستغرام قد يعطي الإعجابات دون مشاهدات الفيديو؛ الصفر هنا غير مؤكد.
+    private var instagramViewsUnknown: Bool {
+        account.isInstagram && account.fetchedVideos > 0 && !account.viewsExact
+    }
+
     private var views24hText: String {
-        if numbersUnavailable { return "—" }
+        if numbersUnavailable || instagramViewsUnknown { return "—" }
         return Num.maybeApprox(account.views24h, exact: account.dailyComplete && account.dailyViewsExact)
     }
 
@@ -1094,12 +1115,12 @@ struct AccountRow: View {
     }
 
     private var avg24hText: String {
-        if numbersUnavailable { return "—" }
+        if numbersUnavailable || instagramViewsUnknown { return "—" }
         return Num.maybeApprox(account.avgViews24h, exact: account.dailyComplete && account.dailyViewsExact)
     }
 
     private var weeklyViewsText: String {
-        if numbersUnavailable { return "—" }
+        if numbersUnavailable || instagramViewsUnknown { return "—" }
         return Num.maybeApprox(account.weeklyViews, exact: account.weeklyScoreExact)
     }
 

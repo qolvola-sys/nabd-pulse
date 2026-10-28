@@ -463,8 +463,10 @@ enum FacebookPageParser {
             weeklyComplete: weeklyComplete,
             weeklyViewsExact: weeklyViewsExact,
             allPostsLoaded: allPostsLoaded,
-            status: "public",
-            error: nil,
+            status: posts.isEmpty ? "pending" : "public",
+            error: posts.isEmpty
+                ? "تعذّرت قراءة منشورات الصفحة الآن؛ اضغط «مزامنة» لإعادة المحاولة."
+                : nil,
             lastSyncedAt: ISO8601DateFormatter.nabd.string(from: Date()),
             createdAt: createdAtValue
         )

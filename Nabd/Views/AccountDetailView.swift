@@ -27,8 +27,14 @@ struct AccountDetailView: View {
         current.weeklyComplete && current.weeklyViewsExact
     }
 
+    /// إنستغرام قد يعطي الإعجابات دون مشاهدات الفيديو، فلا نعرض صفراً مضللاً.
+    private var instagramViewsUnknown: Bool {
+        current.isInstagram && current.fetchedVideos > 0 && !current.viewsExact
+    }
+
     private var views24hText: String {
-        Num.maybeApprox(current.views24h, exact: dailyExact)
+        if instagramViewsUnknown { return "—" }
+        return Num.maybeApprox(current.views24h, exact: dailyExact)
     }
 
     private var posts24hText: String {
@@ -36,7 +42,8 @@ struct AccountDetailView: View {
     }
 
     private var weeklyViewsText: String {
-        Num.maybeApprox(current.weeklyViews, exact: weeklyExact)
+        if instagramViewsUnknown { return "—" }
+        return Num.maybeApprox(current.weeklyViews, exact: weeklyExact)
     }
 
     private var posts7dText: String {
@@ -54,11 +61,14 @@ struct AccountDetailView: View {
             return "≈ مشاهدات فيسبوك متاحة للفيديو فقط؛ المنشورات النصية والصور لا تكشف مشاهدات عامة."
         }
         if current.isInstagram {
+            if !current.viewsExact {
+                return "إنستغرام لم يكشف مشاهدات فيديوهات هذا الحساب الآن، لذا تظهر «—». الإعجابات محسوبة من المنشورات المتاحة علناً."
+            }
             if current.weeklyComplete && current.weeklyViewsExact {
                 return "كل منشورات آخر ٧ أيام المتاحة علناً محمّلة، ومشاهدات الفيديو دقيقة 100%."
             }
             if !current.weeklyComplete {
-                return "≈ يُعرض للزائر نحو ١٢ منشوراً حديثاً؛ قد تكون هناك منشورات أقدم لم يعرضها إنستغرام."
+                return "≈ يُعرض للزائر أحدث منشورات الحساب؛ قد تكون هناك منشورات أقدم لم يعرضها إنستغرام."
             }
             return "≈ مشاهدات إنستغرام متاحة للفيديو والريل فقط؛ منشورات الصور لا تكشف مشاهدات عامة."
         }

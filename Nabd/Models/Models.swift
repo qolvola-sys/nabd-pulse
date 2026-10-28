@@ -233,7 +233,11 @@ struct Account: Identifiable, Codable, Hashable {
     var hasViewData: Bool { views > 0 }
 
     var avgLikesPerPost: Int64 {
-        posts > 0 ? likes / Int64(posts) : 0
+        // مجموع إعجابات المنشورات المحمّلة هو البسط الصحيح، لا إجمالي
+        // الحساب؛ والمقام عدد المنشورات التي قُرئت فعلاً لا كل منشورات الحساب.
+        let total = videoLikes > 0 ? videoLikes : likes
+        let base = fetchedVideos > 0 ? fetchedVideos : posts
+        return base > 0 ? total / Int64(base) : 0
     }
 
     var engagementRate: Double {
