@@ -526,7 +526,7 @@ enum FacebookPageParser {
                 coverUrl: image,
                 shareUrl: permalink,
                 duration: 0,
-                createTime: creationTime,
+                createTime: Int(creationTime),
                 views: viewsValue ?? 0,
                 likes: reactionCount(in: node),
                 comments: commentCount(in: node),

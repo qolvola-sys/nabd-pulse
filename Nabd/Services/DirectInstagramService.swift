@@ -923,7 +923,7 @@ final class DirectInstagramService {
     private func captionText(in node: [String: Any]) -> String? {
         guard let caption = node["edge_media_to_caption"] as? [String: Any],
               let edges = caption["edges"] as? [[String: Any]],
-              let first = edges.first as? [String: Any],
+              let first = edges.first,
               let textNode = first["node"] as? [String: Any] else { return nil }
         return textNode["text"] as? String
     }
