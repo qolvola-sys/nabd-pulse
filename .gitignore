@@ -15,3 +15,5 @@ server/data*/
 *.db
 *.db-wal
 *.db-shm
+
+Tools/__pycache__/
