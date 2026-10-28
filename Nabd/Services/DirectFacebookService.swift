@@ -413,7 +413,7 @@ enum FacebookPageParser {
         let totalShares = posts.reduce(Int64(0)) { $0 + $1.shares }
         let likes24h = recent.reduce(Int64(0)) { $0 + $1.likes }
         let likes7d = weekly.reduce(Int64(0)) { $0 + $1.likes }
-        let videoPosts = posts.filter { $0.viewsExact || $0.views > 0 }
+        let videoPosts = posts.filter(\.isVideo)
 
         // خلاصة الصفحة العامة تعرض ٢٠ منشوراً. إن كانت أقل فهي كل المنشورات
         // المتاحة، وإن كانت ٢٠ فقد يكون هناك المزيد لا يعرضه فيسبوك للزائر.
@@ -534,8 +534,9 @@ enum FacebookPageParser {
                 comments: commentCount(in: node),
                 shares: shareCount(in: node),
                 // فيسبوك ينشر مشاهدات الفيديو فقط. المنشورات النصية والصور
-                // لا تكشف مشاهدات عامة، لذا نعلّمها غير دقيقة بدل اعتبارها صفراً.
-                viewsExact: hasVideo && viewsValue != nil
+                // والروابط لا تُحتسب لها مشاهدات، لذا لا نجعلها «غير دقيقة».
+                viewsExact: !hasVideo || viewsValue != nil,
+                isVideo: hasVideo
             ))
         }
 

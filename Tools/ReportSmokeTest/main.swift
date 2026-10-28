@@ -53,6 +53,23 @@ let approximatePost = ReportPost(
     viewsExact: false
 )
 
+// منشور فيسبوك نصي: يدخل عدّ المنشورات بلا مشاهدات فيديو.
+let facebookPost = ReportPost(
+    id: "fb-1001",
+    pageName: "صفحة فيسبوك",
+    handle: "yellowplus",
+    platform: .facebook,
+    title: "منشور نصي على فيسبوك",
+    url: "https://www.facebook.com/yellowplus",
+    publishedAt: periodStart.addingTimeInterval(21_000),
+    views: 0,
+    likes: 1_200,
+    comments: 30,
+    shares: 5,
+    viewsExact: true,
+    isVideo: false
+)
+
 let groups: [ReportGroup] = [
     ReportGroup(
         name: "المجموعة 1",
@@ -107,7 +124,7 @@ let document = ReportDocument(
     periodEnd: periodEnd,
     generatedAt: periodStart.addingTimeInterval(86_400),
     groups: groups,
-    posts: exactPosts + [approximatePost],
+    posts: exactPosts + [approximatePost, facebookPost],
     note: "ملف اختبار آلي للتحقق من بنية Excel.",
     version: 1
 )

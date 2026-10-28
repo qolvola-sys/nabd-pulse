@@ -166,7 +166,8 @@ final class WeeklyWebScanner: NSObject, WKNavigationDelegate {
                 likes: intValue(raw["likes"]),
                 comments: intValue(raw["comments"]),
                 shares: intValue(raw["shares"]),
-                viewsExact: videoExact
+                viewsExact: videoExact,
+                isVideo: true
             ))
         }
 
@@ -185,7 +186,8 @@ final class WeeklyWebScanner: NSObject, WKNavigationDelegate {
                     likes: 0,
                     comments: 0,
                     shares: 0,
-                    viewsExact: false
+                    viewsExact: false,
+                    isVideo: true
                 ))
             }
         }

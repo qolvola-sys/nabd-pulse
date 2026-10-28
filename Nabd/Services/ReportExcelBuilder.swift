@@ -287,23 +287,23 @@ struct ReportExcelBuilder {
 
         rows.append(mergedRow(
             text: "تفاصيل المنشورات",
-            columns: 11,
+            columns: 12,
             style: .title,
             height: 28,
-            merge: "A1:K2",
+            merge: "A1:L2",
             mergeInto: &merges
         ))
-        rows.append(blankRow(columns: 11, style: .title, height: 26))
+        rows.append(blankRow(columns: 12, style: .title, height: 26))
         rows.append(mergedRow(
-            text: "\(document.periodText)  ·  \(ReportNumber.full(Int64(document.posts.count))) منشوراً  ·  \(ReportNumber.full(document.posts.reduce(Int64(0)) { $0 + $1.views })) مشاهدة",
-            columns: 11,
+            text: "\(document.periodText)  ·  \(ReportNumber.full(Int64(document.posts.count))) منشوراً  ·  \(ReportNumber.full(document.posts.reduce(Int64(0)) { $0 + $1.views })) مشاهدة فيديو",
+            columns: 12,
             style: .subtitle,
             height: 24,
-            merge: "A3:K3",
+            merge: "A3:L3",
             mergeInto: &merges
         ))
 
-        let headers = ["#", "المجموعة", "اسم الصفحة", "المنصة", "وقت النشر", "المشاهدات", "الإعجابات", "التعليقات", "المشاركات", "دقة المشاهدات", "الرابط"]
+        let headers = ["#", "المجموعة", "اسم الصفحة", "المنصة", "نوع المحتوى", "وقت النشر", "المشاهدات", "الإعجابات", "التعليقات", "المشاركات", "دقة المشاهدات", "الرابط"]
         rows.append(XLSXRow(cells: headers.map { XLSXCell.text($0, style: .tableHeader) }, height: 28))
 
         let groupByAccount = groupNamesByAccount()
@@ -311,18 +311,26 @@ struct ReportExcelBuilder {
         for (index, post) in sorted.enumerated() {
             let alt = index % 2 == 1
             let groupName = post.accountID.flatMap { groupByAccount[$0] } ?? "—"
-            let exactText = post.viewsExact ? "دقيق" : "مقرّب"
+            let isVideo = post.isVideo ?? (post.platform == .tiktok)
+            let exactText = isVideo
+                ? (post.viewsExact ? "دقيق" : "مقرّب")
+                : "بدون مشاهدات"
             rows.append(XLSXRow(cells: [
                 XLSXCell.integer(Int64(index + 1), style: alt ? .integerAlt : .integer),
                 XLSXCell.text(groupName, style: alt ? .bodyAlt : .body),
                 XLSXCell.text(displayName(post.pageName), style: alt ? .bodyAlt : .body),
                 XLSXCell.text(post.platform.defaultProgram, style: alt ? .bodyAlt : .body),
+                XLSXCell.text(post.contentTypeText, style: alt ? .bodyAlt : .body),
                 XLSXCell.text(ReportDates.displayDateTime(post.publishedAt), style: alt ? .bodyAlt : .body),
-                XLSXCell.integer(post.views, style: alt ? .integerAlt : .integer),
+                isVideo
+                    ? XLSXCell.integer(post.views, style: alt ? .integerAlt : .integer)
+                    : XLSXCell.text("—", style: alt ? .bodyAlt : .body),
                 XLSXCell.integer(post.likes, style: alt ? .integerAlt : .integer),
                 XLSXCell.integer(post.comments, style: alt ? .integerAlt : .integer),
                 XLSXCell.integer(post.shares, style: alt ? .integerAlt : .integer),
-                XLSXCell.text(exactText, style: post.viewsExact ? .goodPlain : .warningPlain),
+                XLSXCell.text(exactText, style: isVideo
+                    ? (post.viewsExact ? .goodPlain : .warningPlain)
+                    : (alt ? .bodyAlt : .body)),
                 linkCell(post.url, alt: alt),
             ], height: 22))
         }
@@ -330,15 +338,16 @@ struct ReportExcelBuilder {
         if sorted.isEmpty {
             rows.append(mergedRow(
                 text: "لا توجد منشورات مسجلة في هذه الفترة",
-                columns: 11,
+                columns: 12,
                 style: .note,
                 height: 30,
-                merge: "A\(rows.count + 1):K\(rows.count + 1)",
+                merge: "A\(rows.count + 1):L\(rows.count + 1)",
                 mergeInto: &merges
             ))
         } else {
             rows.append(XLSXRow(cells: [
                 XLSXCell.text("الإجمالي", style: .totalText),
+                XLSXCell.text("", style: .totalText),
                 XLSXCell.text("", style: .totalText),
                 XLSXCell.text("", style: .totalText),
                 XLSXCell.text("", style: .totalText),
@@ -351,7 +360,7 @@ struct ReportExcelBuilder {
                 XLSXCell.text("", style: .totalText),
             ], height: 28))
             let totalRow = rows.count
-            merges.append("A\(totalRow):E\(totalRow)")
+            merges.append("A\(totalRow):F\(totalRow)")
         }
 
         return XLSXSheet(
@@ -363,6 +372,7 @@ struct ReportExcelBuilder {
                 XLSXColumn(width: 20),
                 XLSXColumn(width: 22),
                 XLSXColumn(width: 11),
+                XLSXColumn(width: 12),
                 XLSXColumn(width: 24),
                 XLSXColumn(width: 15),
                 XLSXColumn(width: 11),
@@ -373,7 +383,7 @@ struct ReportExcelBuilder {
             ],
             rows: rows,
             freezeRows: 4,
-            autoFilter: sorted.isEmpty ? nil : "A4:K\(4 + sorted.count)",
+            autoFilter: sorted.isEmpty ? nil : "A4:L\(4 + sorted.count)",
             merges: merges,
             showGridLines: false
         )

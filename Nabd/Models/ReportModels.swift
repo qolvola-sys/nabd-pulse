@@ -247,6 +247,9 @@ struct ReportPost: Identifiable, Codable, Hashable {
     var comments: Int64
     var shares: Int64
     var viewsExact: Bool
+    /// هل المنشور فيديو؟ الحقل اختياري كي تبقى التقارير المحفوظة سابقاً
+    /// قابلة للقراءة؛ القيمة nil تعني «غير معروف» في التقارير القديمة.
+    var isVideo: Bool?
 
     init(
         id: String,
@@ -261,7 +264,8 @@ struct ReportPost: Identifiable, Codable, Hashable {
         likes: Int64 = 0,
         comments: Int64 = 0,
         shares: Int64 = 0,
-        viewsExact: Bool = true
+        viewsExact: Bool = true,
+        isVideo: Bool? = nil
     ) {
         self.id = id
         self.accountID = accountID
@@ -276,6 +280,16 @@ struct ReportPost: Identifiable, Codable, Hashable {
         self.comments = comments
         self.shares = shares
         self.viewsExact = viewsExact
+        self.isVideo = isVideo
+    }
+
+    /// وصف نوع المحتوى للعرض في التقارير.
+    var contentTypeText: String {
+        if let isVideo {
+            return isVideo ? "فيديو" : "منشور"
+        }
+        // التقارير القديمة لم تحفظ النوع. تقارير TikTok كانت كلها مقاطع.
+        return platform == .tiktok ? "فيديو" : "—"
     }
 }
 

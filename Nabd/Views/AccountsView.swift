@@ -763,15 +763,14 @@ struct AccountsView: View {
     private var platformViewsUnavailable: Bool {
         if platformNumbersUnavailable { return true }
         guard platform == .instagram else { return false }
-        return platformSummary.views24h == 0
-            && !(platformSummary.dailyComplete && platformSummary.dailyViewsExact)
+        // إنستغرام لا يكشف مشاهدات الفيديو غالبًا؛ الصفر هنا يعني «غير متاح».
+        return platformSummary.loadedVideos == 0 || platformSummary.views24h == 0
     }
 
     private var platformWeeklyViewsUnavailable: Bool {
         if platformNumbersUnavailable { return true }
         guard platform == .instagram else { return false }
-        return platformSummary.weeklyViews == 0
-            && !(platformSummary.weeklyComplete && platformSummary.weeklyViewsExact)
+        return platformSummary.loadedVideos == 0 || platformSummary.weeklyViews == 0
     }
 
     private var posts24hText: String {
@@ -1019,10 +1018,10 @@ struct AccountsView: View {
         if platform == .facebook {
             #if MUTABAA
             if store.spacesEnabled {
-                return "الصق روابط صفحات فيسبوك العامة (حتى ٥٠٠ رابط دفعة واحدة) وستُضاف إلى مساحة «\(store.activeSpaceName)» مع منشوراتها ومشاهدات فيديوها."
+                return "الصق روابط صفحات فيسبوك العامة (حتى ٥٠٠ رابط دفعة واحدة) وستُضاف إلى مساحة «\(store.activeSpaceName)» مع كل منشوراتها (نصوص وصور وروابط وفيديو) ومشاهدات فيديوها."
             }
             #endif
-            return "الصق روابط صفحات فيسبوك العامة (حتى ٥٠٠ رابط دفعة واحدة) وسنرتّب لك المنشورات ومشاهدات الفيديو."
+            return "الصق روابط صفحات فيسبوك العامة (حتى ٥٠٠ رابط دفعة واحدة) وسنرتّب لك كل المنشورات ومشاهدات الفيديو."
         }
         if platform == .instagram {
             #if MUTABAA
@@ -1101,7 +1100,9 @@ struct AccountRow: View {
 
     /// إنستغرام قد يعطي الإعجابات دون مشاهدات الفيديو؛ الصفر هنا غير مؤكد.
     private var instagramViewsUnknown: Bool {
-        account.isInstagram && account.fetchedVideos > 0 && !account.viewsExact
+        account.isInstagram
+            && account.fetchedVideos > 0
+            && (account.views == 0 || !account.viewsExact)
     }
 
     private var views24hText: String {
@@ -1177,7 +1178,7 @@ struct AccountRow: View {
             HStack(alignment: .center, spacing: 10) {
                 statColumn(value: posts24hText, label: "منشور ٢٤س")
                 statColumn(value: avg24hText, label: "متوسط ٢٤س")
-                statColumn(value: Num.maybeApprox(account.followers, exact: account.profileExact), label: "متابع")
+                statColumn(value: numbersUnavailable ? "—" : Num.maybeApprox(account.followers, exact: account.profileExact), label: "متابع")
 
                 Spacer(minLength: 2)
 

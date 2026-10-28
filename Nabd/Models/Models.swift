@@ -394,9 +394,12 @@ struct VideoItem: Identifiable, Codable, Hashable {
     var shares: Int64
     /// هل عدد المشاهدات دقيق؟ الأرقام العامة الكبيرة يقرّبها TikTok.
     var viewsExact: Bool
+    /// هل هذا المنشور مقطع فيديو؟ فيسبوك وإنستغرام يعيدان أيضاً النصوص
+    /// والصور والروابط، وهذه لا تُحتسب لها مشاهدات.
+    var isVideo: Bool
 
     enum CodingKeys: String, CodingKey {
-        case id, title, coverUrl, shareUrl, duration, createTime, views, likes, comments, shares, viewsExact
+        case id, title, coverUrl, shareUrl, duration, createTime, views, likes, comments, shares, viewsExact, isVideo
     }
 
     init(from decoder: Decoder) throws {
@@ -412,11 +415,14 @@ struct VideoItem: Identifiable, Codable, Hashable {
         comments = c.flexInt64(.comments)
         shares = c.flexInt64(.shares)
         viewsExact = c.flexBool(.viewsExact, default: views < 10_000)
+        // الكاشات القديمة كانت تحتوي فيديوهات فقط، فغياب الحقل يعني فيديو.
+        isVideo = c.flexBool(.isVideo, default: true)
     }
 
     init(id: String, title: String, coverUrl: String? = nil, shareUrl: String? = nil,
          duration: Int = 0, createTime: Int = 0, views: Int64 = 0, likes: Int64 = 0,
-         comments: Int64 = 0, shares: Int64 = 0, viewsExact: Bool = false) {
+         comments: Int64 = 0, shares: Int64 = 0, viewsExact: Bool = false,
+         isVideo: Bool = true) {
         self.id = id
         self.title = title
         self.coverUrl = coverUrl
@@ -428,6 +434,7 @@ struct VideoItem: Identifiable, Codable, Hashable {
         self.comments = comments
         self.shares = shares
         self.viewsExact = viewsExact
+        self.isVideo = isVideo
     }
 }
 

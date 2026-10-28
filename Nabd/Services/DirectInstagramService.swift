@@ -241,27 +241,27 @@ final class DirectInstagramService {
             }
         }
 
-        // ٠) تهيئة كوكيز الجلسة العامة لتحسين قبول واجهة الويب.
-        await warmUpIfNeeded()
-
-        // ١) واجهة الويب العامة: أدق أرقام وأحدث المنشورات.
+        // ٠) صفحة التضمين العامة أولاً: لا تحتاج كوكيز ولا تسجيل دخول،
+        // وتعرض الملف وآخر منشوراته مع الإعجابات الحقيقية. البدء بها يمنع
+        // طلبات الواجهة من استنفاد حصة الشبكة وحجب القراءة كلها.
         var profileOnly: DirectInstagramResult?
-        if let apiResult = try? await fetchAPI(reference: reference, createdAt: createdAt) {
-            if !apiResult.videos.isEmpty { return apiResult }
-            // الملف قُرئ لكن المنشورات لم تُرجع: نجرّب التضمين قبل الاكتفاء به.
-            profileOnly = apiResult
-        }
-
-        // ٢) صفحة التضمين العامة: تعرض آخر ٦ منشورات مع أرقام الإعجابات
-        // الحقيقية حتى عندما تحجب الواجهة الطلبات بـ429.
         if let embedResult = try? await fetchEmbed(reference: reference, createdAt: createdAt) {
             if !embedResult.videos.isEmpty { return embedResult }
-            if profileOnly == nil { profileOnly = embedResult }
+            profileOnly = embedResult
         }
 
-        // ٣) صفحة الحساب وبياناتها المدمجة، ثم وسوم og كحد أدنى.
+        // ١) واجهة الويب العامة: أدق أرقام ومشاهدات الفيديو عندما تسمح.
+        await warmUpIfNeeded()
+        if let apiResult = try? await fetchAPI(reference: reference, createdAt: createdAt) {
+            if !apiResult.videos.isEmpty { return apiResult }
+            // الملف قُرئ لكن المنشورات لم تُرجع: نجرّب صفحة الحساب قبل الاكتفاء به.
+            if profileOnly == nil { profileOnly = apiResult }
+        }
+
+        // ٢) صفحة الحساب وبياناتها المدمجة، ثم وسوم og كحد أدنى.
         if let htmlResult = try? await fetchHTML(reference: reference, createdAt: createdAt) {
-            return htmlResult
+            if !htmlResult.videos.isEmpty { return htmlResult }
+            if profileOnly == nil { profileOnly = htmlResult }
         }
 
         // لا منشورات من أي مصدر: نعيد ملف الحساب إن قُرئ بدل إسقاطه.
@@ -420,18 +420,31 @@ final class DirectInstagramService {
         guard !handle.isEmpty else { throw DirectInstagramError.invalidLink }
 
         var urls: [URL] = []
-        for suffix in ["embed/", "embed/captioned/"] {
+        for suffix in ["embed/", "embed"] {
             if let url = URL(string: "https://www.instagram.com/\(handle)/\(suffix)") {
                 urls.append(url)
             }
         }
         guard !urls.isEmpty else { throw DirectInstagramError.invalidLink }
 
+        // واجهة الهاتف هي التي تعيد contextJSON فعلاً. نجرّبها أولاً بجلسة
+        // نظيفة، ثم بجلسة التطبيق (بكوكيز) لأن بعض الشبكات ترفض الجلسة
+        // النظيفة وحدها. سطح المكتب لا يعيد contextJSON حاليًا.
+        let attempts: [(session: URLSession, agent: String)] = [
+            (embedSession, userAgent),
+            (session, userAgent),
+        ]
+
         var lastError: DirectInstagramError = .blocked
         for url in urls {
-            for agent in [userAgent, desktopUserAgent] {
+            for attempt in attempts {
                 do {
-                    let context = try await loadEmbedContext(url: url, userAgent: agent, handle: handle)
+                    let context = try await loadEmbedContext(
+                        url: url,
+                        userAgent: attempt.agent,
+                        handle: handle,
+                        session: attempt.session
+                    )
                     return try makeEmbedResult(context: context, reference: reference, createdAt: createdAt)
                 } catch let error as DirectInstagramError {
                     lastError = error
@@ -439,7 +452,7 @@ final class DirectInstagramService {
                     lastError = .blocked
                 }
                 // فرصة قصيرة بين المحاولات بدل إغراق إنستغرام بالطلبات.
-                try? await Task.sleep(nanoseconds: 300_000_000)
+                try? await Task.sleep(nanoseconds: 250_000_000)
             }
         }
         throw lastError
@@ -448,15 +461,23 @@ final class DirectInstagramService {
     private func loadEmbedContext(
         url: URL,
         userAgent agent: String,
-        handle: String
+        handle: String,
+        session: URLSession
     ) async throws -> [String: Any] {
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 20)
         request.setValue(agent, forHTTPHeaderField: "User-Agent")
         request.setValue("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", forHTTPHeaderField: "Accept")
         request.setValue("en-US,en;q=0.9,ar;q=0.8", forHTTPHeaderField: "Accept-Language")
         request.setValue("https://www.instagram.com/\(handle)/", forHTTPHeaderField: "Referer")
+        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+        request.setValue("1", forHTTPHeaderField: "Upgrade-Insecure-Requests")
+        // ترويسات متصفح حقيقية تقلّل احتمال معاملة الطلب كزاحف.
+        request.setValue("none", forHTTPHeaderField: "Sec-Fetch-Site")
+        request.setValue("navigate", forHTTPHeaderField: "Sec-Fetch-Mode")
+        request.setValue("document", forHTTPHeaderField: "Sec-Fetch-Dest")
+        request.setValue("?0", forHTTPHeaderField: "Sec-Fetch-User")
 
-        let (data, response) = try await embedSession.data(for: request)
+        let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw DirectInstagramError.badResponse }
         if http.statusCode == 404 { throw DirectInstagramError.notFound }
         guard (200..<300).contains(http.statusCode),
@@ -514,20 +535,40 @@ final class DirectInstagramService {
             .replacingOccurrences(of: "&quot;", with: "\"")
             .replacingOccurrences(of: "&#34;", with: "\"")
             .replacingOccurrences(of: "&#x22;", with: "\"")
-        let pattern = #""contextJSON"\s*:\s*"((?:[^"\\]|\\.)*)""#
-        guard let regex = try? NSRegularExpression(pattern: pattern),
-              let match = regex.firstMatch(in: normalized, range: NSRange(normalized.startIndex..., in: normalized)),
-              match.numberOfRanges > 1,
-              let range = Range(match.range(at: 1), in: normalized) else { return nil }
+            .replacingOccurrences(of: "&#39;", with: "'")
+            .replacingOccurrences(of: "&#x27;", with: "'")
 
-        let escaped = String(normalized[range])
-        guard let wrapped = ("\"" + escaped + "\"").data(using: .utf8),
-              let raw = try? JSONSerialization.jsonObject(with: wrapped) as? String,
-              let data = raw.data(using: .utf8),
-              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return nil
+        // الصفحة تستخدم علامات تنصيص مزدوجة عادة، وبعض النسخ تستخدم مفردة.
+        let patterns = [
+            #""contextJSON"\s*:\s*"((?:[^"\\]|\\.)*)""#,
+            #"'contextJSON'\s*:\s*'((?:[^'\\]|\\.)*)'"#,
+        ]
+
+        for pattern in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern),
+                  let match = regex.firstMatch(in: normalized, range: NSRange(normalized.startIndex..., in: normalized)),
+                  match.numberOfRanges > 1,
+                  let range = Range(match.range(at: 1), in: normalized) else { continue }
+
+            let escaped = String(normalized[range])
+            let isSingleQuoted = pattern.hasPrefix("'")
+            // JSON لا يقبل علامات التنصيص المفردة؛ نحوّل السلسلة المفردة
+            // إلى سلسلة JSON صالحة مع تهريب أي علامة مزدوجة داخلها.
+            let jsonBody = isSingleQuoted
+                ? escaped
+                    .replacingOccurrences(of: "\\'", with: "'")
+                    .replacingOccurrences(of: "\"", with: "\\\"")
+                : escaped
+            guard let wrapped = ("\"" + jsonBody + "\"").data(using: .utf8),
+                  let raw = try? JSONSerialization.jsonObject(with: wrapped) as? String,
+                  let data = raw.data(using: .utf8),
+                  let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                continue
+            }
+            // بعض النسخ تغلّف الكائن بمفتاح context، وأخرى تعيده مباشرة.
+            return (root["context"] as? [String: Any]) ?? root
         }
-        return root["context"] as? [String: Any]
+        return nil
     }
 
     /// منشورات التضمين: مصفوفة graphql_media، أو كائن واحد، أو خلاصة
@@ -913,7 +954,8 @@ final class DirectInstagramService {
             shares: 0,
             // مشاهدات الفيديو فقط تُنشر. الصور لا تُحتسب مشاهدات، والفيديو
             // الذي لا يحمل عدد مشاهدات يبقى غير معروف لا صفراً مؤكداً.
-            viewsExact: !isVideo || viewsValue != nil
+            viewsExact: !isVideo || viewsValue != nil,
+            isVideo: isVideo
         )
     }
 

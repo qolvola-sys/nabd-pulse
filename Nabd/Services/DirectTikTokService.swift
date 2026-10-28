@@ -290,7 +290,8 @@ final class DirectTikTokService {
                 comments: 0,
                 shares: 0,
                 // TikTok يعرض مشاهدات الفيديو العامة مقرّبة فوق ١٠ آلاف.
-                viewsExact: viewCount < 10_000
+                viewsExact: viewCount < 10_000,
+                isVideo: true
             ))
         }
         videos.sort { $0.createTime > $1.createTime }

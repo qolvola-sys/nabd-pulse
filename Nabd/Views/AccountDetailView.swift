@@ -27,27 +27,36 @@ struct AccountDetailView: View {
         current.weeklyComplete && current.weeklyViewsExact
     }
 
+    /// لم تُقرأ أي منشورات بعد: لا نعرض أصفاراً تبدو أرقاماً حقيقية.
+    private var numbersUnavailable: Bool {
+        current.status == "pending" && current.fetchedVideos == 0
+    }
+
     /// إنستغرام قد يعطي الإعجابات دون مشاهدات الفيديو، فلا نعرض صفراً مضللاً.
     private var instagramViewsUnknown: Bool {
-        current.isInstagram && current.fetchedVideos > 0 && !current.viewsExact
+        current.isInstagram
+            && current.fetchedVideos > 0
+            && (current.views == 0 || !current.viewsExact)
     }
 
     private var views24hText: String {
-        if instagramViewsUnknown { return "—" }
+        if numbersUnavailable || instagramViewsUnknown { return "—" }
         return Num.maybeApprox(current.views24h, exact: dailyExact)
     }
 
     private var posts24hText: String {
-        current.dailyComplete ? Num.full(Int64(current.posts24h)) : Num.atLeast(Int64(current.posts24h))
+        if numbersUnavailable { return "—" }
+        return current.dailyComplete ? Num.full(Int64(current.posts24h)) : Num.atLeast(Int64(current.posts24h))
     }
 
     private var weeklyViewsText: String {
-        if instagramViewsUnknown { return "—" }
+        if numbersUnavailable || instagramViewsUnknown { return "—" }
         return Num.maybeApprox(current.weeklyViews, exact: weeklyExact)
     }
 
     private var posts7dText: String {
-        current.weeklyComplete ? Num.full(Int64(current.posts7d)) : Num.atLeast(Int64(current.posts7d))
+        if numbersUnavailable { return "—" }
+        return current.weeklyComplete ? Num.full(Int64(current.posts7d)) : Num.atLeast(Int64(current.posts7d))
     }
 
     private var weeklyFootnote: String {
@@ -456,26 +465,30 @@ struct AccountDetailView: View {
 
     private var statsGrid: some View {
         LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
-            StatCard(title: "المنشورات", value: Num.maybeApprox(Int64(current.posts), exact: current.postsCountExact), icon: "square.stack.3d.up.fill", tint: Theme.cyan)
+            StatCard(title: "المنشورات", value: numbersUnavailable ? "—" : Num.maybeApprox(Int64(current.posts), exact: current.postsCountExact), icon: "square.stack.3d.up.fill", tint: Theme.cyan)
             StatCard(
                 title: "المشاهدات",
-                value: current.hasViewData ? Num.maybeApprox(current.views, exact: current.viewsExact) : "—",
+                value: numbersUnavailable ? "—" : (current.hasViewData ? Num.maybeApprox(current.views, exact: current.viewsExact) : "—"),
                 icon: "play.fill",
                 tint: Theme.violet,
-                hint: current.hasViewData
-                    ? (current.allPostsLoaded ? "كل المنشورات" : "من المنشورات المحمّلة")
-                    : "لا توجد بيانات عامة"
+                hint: numbersUnavailable
+                    ? "لم تُقرأ المنشورات بعد"
+                    : (current.hasViewData
+                        ? (current.allPostsLoaded ? "كل المنشورات" : "من المنشورات المحمّلة")
+                        : "لا توجد مشاهدات فيديو معلنة")
             )
             StatCard(
                 title: current.hasViewData ? "متوسط المشاهدات" : "متوسط الإعجابات",
-                value: current.hasViewData
-                    ? Num.maybeApprox(current.avgViewsPerPost, exact: current.viewsExact)
-                    : Num.maybeApprox(current.avgLikesPerPost, exact: current.profileExact),
+                value: numbersUnavailable
+                    ? "—"
+                    : (current.hasViewData
+                        ? Num.maybeApprox(current.avgViewsPerPost, exact: current.viewsExact)
+                        : Num.maybeApprox(current.avgLikesPerPost, exact: current.profileExact)),
                 icon: "chart.bar.fill",
                 tint: Theme.pink,
                 hint: current.hasViewData && !current.allPostsLoaded ? "للمنشورات المحمّلة" : nil
             )
-            StatCard(title: "المتابعون", value: Num.maybeApprox(current.followers, exact: current.profileExact), icon: "person.3.fill", tint: Theme.gold)
+            StatCard(title: "المتابعون", value: numbersUnavailable ? "—" : Num.maybeApprox(current.followers, exact: current.profileExact), icon: "person.3.fill", tint: Theme.gold)
         }
     }
 
@@ -486,30 +499,31 @@ struct AccountDetailView: View {
                 value: current.hasVideoEngagementData ? current.videoLikes : current.likes,
                 label: current.hasVideoEngagementData ? "إعجاب" : "إجمالي الإعجابات",
                 tint: Theme.pink,
-                exact: current.hasVideoEngagementData || current.profileExact
+                exact: current.hasVideoEngagementData || current.profileExact,
+                unavailable: numbersUnavailable
             )
             Rectangle().fill(Theme.borderSoft).frame(width: 1, height: 26)
             if current.hasVideoEngagementData {
-                engagementItem(icon: "bubble.right.fill", value: current.comments, label: "تعليق", tint: Theme.cyan)
+                engagementItem(icon: "bubble.right.fill", value: current.comments, label: "تعليق", tint: Theme.cyan, unavailable: numbersUnavailable)
                 Rectangle().fill(Theme.borderSoft).frame(width: 1, height: 26)
-                engagementItem(icon: "arrowshape.turn.up.right.fill", value: current.shares, label: "مشاركة", tint: Theme.violet)
+                engagementItem(icon: "arrowshape.turn.up.right.fill", value: current.shares, label: "مشاركة", tint: Theme.violet, unavailable: numbersUnavailable)
                 Rectangle().fill(Theme.borderSoft).frame(width: 1, height: 26)
             } else {
-                engagementItem(icon: "square.stack.3d.up.fill", value: Int64(current.posts), label: "منشور", tint: Theme.cyan, exact: current.postsCountExact)
+                engagementItem(icon: "square.stack.3d.up.fill", value: Int64(current.posts), label: "منشور", tint: Theme.cyan, exact: current.postsCountExact, unavailable: numbersUnavailable)
                 Rectangle().fill(Theme.borderSoft).frame(width: 1, height: 26)
             }
-            engagementItem(icon: "person.2.fill", value: current.followers, label: "متابع", tint: Theme.gold, exact: current.profileExact)
+            engagementItem(icon: "person.2.fill", value: current.followers, label: "متابع", tint: Theme.gold, exact: current.profileExact, unavailable: numbersUnavailable)
         }
         .padding(.vertical, 12)
         .card(padding: 0, radius: 18)
     }
 
-    private func engagementItem(icon: String, value: Int64, label: String, tint: Color, exact: Bool = true) -> some View {
+    private func engagementItem(icon: String, value: Int64, label: String, tint: Color, exact: Bool = true, unavailable: Bool = false) -> some View {
         VStack(spacing: 4) {
             Image(systemName: icon)
                 .font(.system(size: 11))
                 .foregroundColor(tint)
-            Text(Num.maybeApprox(value, exact: exact))
+            Text(unavailable ? "—" : Num.maybeApprox(value, exact: exact))
                 .font(.system(size: 12, weight: .bold, design: .rounded))
                 .foregroundColor(Theme.text)
                 .lineLimit(1)
@@ -549,8 +563,8 @@ struct AccountDetailView: View {
                         .foregroundColor(Theme.textTertiary)
                     Text(current.isFacebook
                          ? (current.viewsExact
-                            ? "مشاهدات الفيديو المحمّلة دقيقة 100%."
-                            : "≈ مشاهدات فيسبوك متاحة للفيديو فقط — المنشورات النصية والصور بلا مشاهدات معروضة.")
+                            ? "مشاهدات فيديو فيسبوك المحمّلة دقيقة 100% — والقائمة تشمل كل المنشورات."
+                            : "≈ مشاهدات فيسبوك تُنشر للفيديو فقط؛ بقية المنشورات بلا مشاهدات معلنة.")
                          : (current.isInstagram
                             ? (current.viewsExact
                                ? "مشاهدات الريل المحمّلة دقيقة 100%."
@@ -594,7 +608,9 @@ struct AccountDetailView: View {
         VStack(spacing: 12) {
             SectionHeader(
                 title: "أحدث المنشورات",
-                subtitle: "أعلى المنشورات مشاهدةً ضمن آخر سحب",
+                subtitle: current.isFacebook
+                    ? "كل ما نشرته الصفحة: نصوص وصور وروابط وفيديو"
+                    : "أعلى المنشورات مشاهدةً ضمن آخر سحب",
                 actionTitle: nil,
                 action: nil
             )
@@ -614,7 +630,7 @@ struct AccountDetailView: View {
                 }
             } else if videos.isEmpty {
                 EmptyStateView(
-                    icon: "video.badge.clock",
+                    icon: current.isFacebook ? "rectangle.on.rectangle" : "video.badge.clock",
                     title: "لا توجد منشورات محفوظة بعد",
                     message: "اضغط تحديث لجلب أحدث المنشورات من \(current.platform.title). تبقى الإحصاءات السابقة محفوظة إذا كان \(current.platform.title) مشغولاً.",
                     actionTitle: "تحديث الآن",
@@ -758,12 +774,34 @@ struct VideoRow: View {
                     .foregroundColor(Theme.text)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
+                HStack(spacing: 6) {
+                    Text(video.isVideo ? "فيديو" : "منشور")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundColor(video.isVideo ? Theme.cyan : Theme.violet)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1.5)
+                        .background(
+                            Capsule().fill(
+                                (video.isVideo ? Theme.cyan : Theme.violet).opacity(0.12)
+                            )
+                        )
+                    Text(Dates.videoDate(video.createTime))
+                        .font(.system(size: 9.5, weight: .medium, design: .rounded))
+                        .foregroundColor(Theme.textTertiary)
+                        .lineLimit(1)
+                }
                 HStack(spacing: 8) {
-                    Label(Num.maybeApprox(video.views, exact: video.viewsExact), systemImage: "play.fill")
+                    // المشاهدات تُعرض للفيديو فقط؛ منشورات النص والصور
+                    // والروابط لا تملك مشاهدات، فلا نعرض لها صفراً مضللاً.
+                    if video.isVideo {
+                        Label(Num.maybeApprox(video.views, exact: video.viewsExact), systemImage: "play.fill")
+                    }
                     if video.likes > 0 {
                         Label(Num.full(video.likes), systemImage: "heart.fill")
                     }
-                    Text(Dates.videoDate(video.createTime))
+                    if video.comments > 0 {
+                        Label(Num.full(video.comments), systemImage: "bubble.left.fill")
+                    }
                 }
                 .font(.system(size: 9.5, weight: .medium, design: .rounded))
                 .foregroundColor(Theme.textTertiary)
@@ -789,7 +827,7 @@ struct VideoRow: View {
     }
 
     private var placeholder: some View {
-        Image(systemName: "play.fill")
+        Image(systemName: video.isVideo ? "play.fill" : "text.alignleft")
             .font(.system(size: 13))
             .foregroundColor(Theme.textSecondary)
     }

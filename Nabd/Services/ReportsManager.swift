@@ -547,7 +547,8 @@ final class ReportsManager: ObservableObject {
                 likes: video.likes,
                 comments: video.comments,
                 shares: video.shares,
-                viewsExact: video.viewsExact
+                viewsExact: video.viewsExact,
+                isVideo: video.isVideo
             )
         }
 
@@ -567,8 +568,9 @@ final class ReportsManager: ObservableObject {
     }
 
     /// يقرأ صفحة فيسبوك العامة وقت التوليد. المنشورات المتاحة علناً هي آخر
-    /// ٢٠ منشوراً، ومشاهدات الفيديو فقط هي التي تُنشر. نعلّم النتيجة جزئية
-    /// أو تقريبية إن لم تغطِّ النافذة كاملة أو إن وُجدت منشورات بلا مشاهدات.
+    /// ٢٠ منشوراً، وتشمل النصوص والصور والروابط والفيديو. مشاهدات الفيديو
+    /// فقط هي التي تُنشر، وبقية المنشورات تُدرج بلا مشاهدات. نعلّم النتيجة
+    /// جزئية إن لم تغطِّ النافذة كاملة أو تقريبية إن نقصت مشاهدات فيديو.
     private func parseFacebook(
         account: Account,
         startUnix: Int,
@@ -584,17 +586,20 @@ final class ReportsManager: ObservableObject {
                 url: baseURL,
                 createdAt: account.createdAt
             )
-            let videos = result.videos
-            let windowVideos = videos.filter {
+            let posts = result.videos
+            let windowPosts = posts.filter {
                 $0.createTime >= startUnix && $0.createTime < endUnix
             }
-            let complete = facebookWindowComplete(videos: videos, startUnix: startUnix)
+            let complete = facebookWindowComplete(videos: posts, startUnix: startUnix)
+            // كل المنشورات تدخل العدّ، لكن عمود المشاهدات يخص الفيديو فقط.
+            let windowVideos = windowPosts.filter(\.isVideo)
             let views = windowVideos.reduce(Int64(0)) { $0 + $1.views }
-            let allExact = !windowVideos.isEmpty && windowVideos.allSatisfy { $0.viewsExact }
+            let allExact = windowVideos.allSatisfy { $0.viewsExact }
+            let hasNonVideo = windowPosts.contains { !$0.isVideo }
 
             let quality: ReportQuality
             let notes: String
-            if windowVideos.isEmpty {
+            if windowPosts.isEmpty {
                 quality = .partial
                 notes = "لم تُرجع الصفحة منشورات عامة داخل الفترة. قد تكون الصفحة جديدة أو تحدّ فيسبوك المحتوى العام."
             } else if !complete {
@@ -602,13 +607,16 @@ final class ReportsManager: ObservableObject {
                 notes = "أحدث ٢٠ منشوراً فقط متاحة علناً؛ قد توجد منشورات أخرى داخل الفترة. أعد التوليد لاحقاً."
             } else if !allExact {
                 quality = .approximate
-                notes = "مشاهدات فيسبوك المتاحة علناً للفيديو فقط؛ المنشورات النصية والصور بلا مشاهدات معلنة."
+                notes = "تشمل القائمة كل المنشورات؛ وبعض مقاطع الفيديو لا تكشف مشاهداتها علناً."
+            } else if hasNonVideo {
+                quality = .exact
+                notes = "تشمل القائمة كل المنشورات (نصوص وصور وروابط وفيديو)؛ عمود المشاهدات يحسب مشاهدات الفيديو فقط."
             } else {
                 quality = .exact
-                notes = "مشاهدات فيديو فيسبوك من الصفحة العامة."
+                notes = "منشورات فيسبوك ومشاهدات الفيديو من الصفحة العامة."
             }
 
-            let posts = windowVideos.map { video in
+            let reportPosts = windowPosts.map { video in
                 ReportPost(
                     id: video.id,
                     accountID: account.id,
@@ -622,7 +630,8 @@ final class ReportsManager: ObservableObject {
                     likes: video.likes,
                     comments: video.comments,
                     shares: video.shares,
-                    viewsExact: video.viewsExact
+                    viewsExact: video.viewsExact,
+                    isVideo: video.isVideo
                 )
             }
 
@@ -631,13 +640,13 @@ final class ReportsManager: ObservableObject {
                 pageName: account.displayName,
                 platform: .facebook,
                 program: "فيسبوك",
-                posts: windowVideos.count,
+                posts: windowPosts.count,
                 views: views,
                 notes: notes,
                 url: baseURL,
                 quality: quality
             )
-            return ParsedAccount(row: row, posts: posts)
+            return ParsedAccount(row: row, posts: reportPosts)
         } catch {
             return ParsedAccount(
                 row: ReportRow(
@@ -725,7 +734,8 @@ final class ReportsManager: ObservableObject {
                     likes: video.likes,
                     comments: video.comments,
                     shares: video.shares,
-                    viewsExact: video.viewsExact
+                    viewsExact: video.viewsExact,
+                    isVideo: video.isVideo
                 )
             }
 

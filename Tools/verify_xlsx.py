@@ -200,8 +200,27 @@ def main() -> None:
 
         posts_sheet = read_xml(archive, "xl/worksheets/sheet3.xml")
         posts_cells = sheet_cells(posts_sheet)
-        if posts_cells.get("A4") != "#" or posts_cells.get("F4") != "المشاهدات":
+        if (posts_cells.get("A4") != "#"
+                or posts_cells.get("E4") != "نوع المحتوى"
+                or posts_cells.get("G4") != "المشاهدات"):
             fail("رؤوس ورقة تفاصيل المنشورات غير صحيحة")
+
+        # صف منشور فيسبوك النصي: نوعه «منشور» ولا تُعرض له مشاهدات.
+        rows_by_index: dict[str, dict[str, str]] = {}
+        for reference, value in posts_cells.items():
+            column = "".join(ch for ch in reference if ch.isalpha())
+            row = reference[len(column):]
+            rows_by_index.setdefault(row, {})[column] = value
+        facebook_rows = [
+            row for row in rows_by_index.values()
+            if row.get("E") == "منشور"
+        ]
+        if not facebook_rows:
+            fail(f"لم يُعثر على صف منشور غير فيديو: {list(rows_by_index.values())[:3]}")
+        if any(row.get("G") != "—" for row in facebook_rows):
+            fail(f"منشور غير فيديو ظهرت له مشاهدات: {facebook_rows[0]}")
+        if not any(row.get("E") == "فيديو" for row in rows_by_index.values()):
+            fail("لم يُعثر على صف فيديو في ورقة التفاصيل")
 
         print("PASS: ZIP/XML, 3 sheets, RTL, title, headers, numeric cells, merges and hyperlinks are valid")
 
