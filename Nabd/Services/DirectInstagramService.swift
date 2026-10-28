@@ -211,6 +211,11 @@ final class DirectInstagramService {
     private var relayDetails: [String: String] = [:]
     /// رمز استجابة آخر طلب لصفحة التضمين المباشرة.
     private var embedStatusCode: Int?
+    /// آخر صفحة تضمين وصلت بحالة نجاح، نحتفظ بها لاستخراج بديل إن فشل
+    /// تحليل contextJSON.
+    private var lastEmbedHTML = ""
+    /// سبب فشل تحليل contextJSON في آخر محاولة.
+    private var lastContextFailure = ""
 
     func diagnostic(for handle: String) -> String {
         diagnostics[handle.lowercased()] ?? "لم تُجرَّب بعد"
@@ -244,8 +249,15 @@ final class DirectInstagramService {
         return "\(name) \(status) \(body.count)B ctx=\(hasJSON ? 1 : 0) login=\(hasLogin ? 1 : 0) consent=\(hasConsent ? 1 : 0) head=\(head)"
     }
 
-    /// تقرير كامل قابل للنسخ، يرسله المستخدم عند تعذّر القراءة.
+    private var reportSnapshots: [String: String] = [:]
+
+    /// تقرير كامل قابل للنسخ، يرسله المستخدم عند تعذّر القراءة. يُفضّل
+    /// آخر لقطة مكتملة، فإن لم توجد يعرض الحالة الجارية.
     func report(for handle: String) -> String {
+        reportSnapshots[handle.lowercased()] ?? makeReport(for: handle)
+    }
+
+    private func makeReport(for handle: String) -> String {
         let key = handle.lowercased()
         var lines: [String] = []
         lines.append("app=\(AppVariant.version)")
@@ -257,7 +269,11 @@ final class DirectInstagramService {
     }
 
     private func note(_ text: String, for handle: String) {
-        diagnostics[handle.lowercased()] = text
+        let key = handle.lowercased()
+        diagnostics[key] = text
+        // نحتفظ بلقطة مكتملة بعد انتهاء المحاولة، حتى لا ينسخ المستخدم
+        // تقريراً نصف مكتمل أثناء مزامنة جارية.
+        reportSnapshots[key] = makeReport(for: handle)
     }
 
     private init() {
@@ -554,6 +570,7 @@ final class DirectInstagramService {
         ]
 
         var lastError: DirectInstagramError = .blocked
+        var sawSuccessPage = false
         for url in urls {
             for attempt in attempts {
                 do {
@@ -563,9 +580,17 @@ final class DirectInstagramService {
                         handle: handle,
                         session: attempt.session
                     )
+                    sawSuccessPage = true
                     return try makeEmbedResult(context: context, reference: reference, createdAt: createdAt)
                 } catch let error as DirectInstagramError {
-                    lastError = error
+                    let code = embedStatusCode ?? 0
+                    if (200..<300).contains(code) { sawSuccessPage = true }
+                    // لا ندع 404 من رابط بديل يلغي نتيجة صفحة نجحت.
+                    if case .notFound = error {
+                        if !sawSuccessPage { lastError = .notFound }
+                    } else {
+                        lastError = error
+                    }
                 } catch {
                     lastError = .blocked
                 }
@@ -573,7 +598,17 @@ final class DirectInstagramService {
                 try? await Task.sleep(nanoseconds: 250_000_000)
             }
         }
-        throw lastError
+
+        // وصلت صفحة ناجحة لكن تحليل contextJSON فشل: نستخرج منها بأي
+        // طريقة أخرى قبل الاستسلام، لأن البيانات موجودة فيها فعلاً.
+        if sawSuccessPage, !lastEmbedHTML.isEmpty,
+           let fallback = try? parseProfileHTML(lastEmbedHTML, reference: reference, createdAt: createdAt),
+           !fallback.videos.isEmpty || fallback.account.followers > 0 {
+            return fallback
+        }
+
+        // صفحة وصلت فعلاً ولم تُفهم: السبب تحليل لا «حساب غير موجود».
+        throw sawSuccessPage ? DirectInstagramError.blocked : lastError
     }
 
     private func loadEmbedContext(
@@ -602,11 +637,23 @@ final class DirectInstagramService {
         )
         if http.statusCode == 404 { throw DirectInstagramError.notFound }
         guard (200..<300).contains(http.statusCode),
-              let html = String(data: data, encoding: .utf8),
-              let context = embedContext(in: html) else {
+              let html = String(data: data, encoding: .utf8) else {
             throw DirectInstagramError.blocked
         }
-        return context
+        lastEmbedHTML = html
+        if let context = embedContext(in: html) { return context }
+        // نسجّل سبب الفشل ومقتطفاً من موضع البيانات، لنعرف هل وصلت
+        // الصفحة بشكل مختلف أم أن التحليل هو المشكلة.
+        recordSample("parsefail \(lastContextFailure) around=\(contextSnippet(in: html))", for: handle)
+        throw DirectInstagramError.blocked
+    }
+
+    private func contextSnippet(in html: String) -> String {
+        guard let range = html.range(of: "contextJSON") else { return "no-marker" }
+        let tail = html[range.lowerBound...].prefix(70)
+        return tail
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\r", with: " ")
     }
 
     private func makeEmbedResult(
@@ -650,6 +697,10 @@ final class DirectInstagramService {
     }
 
     /// يفكّ سلسلة contextJSON المهربة داخل صفحة التضمين.
+    ///
+    /// نستخدم أولاً استخراجاً يدوياً حرفاً بحرف لا يعتمد على محرك التعابير
+    /// النمطية، لأن السلسلة طويلة (نحو ٤٢ ألف حرف) وقد يختلف سلوك المحرك
+    /// بين الأنظمة. ثم نعود إلى التعابير النمطية كاحتياط.
     private func embedContext(in html: String) -> [String: Any]? {
         // بعض النسخ تُرمّز علامات التنصيص ككيانات HTML قبل السلسلة.
         let normalized = html
@@ -658,6 +709,13 @@ final class DirectInstagramService {
             .replacingOccurrences(of: "&#x22;", with: "\"")
             .replacingOccurrences(of: "&#39;", with: "'")
             .replacingOccurrences(of: "&#x27;", with: "'")
+
+        if let payload = contextJSONPayload(in: normalized) {
+            if let context = decodeContext(payload) { return context }
+            lastContextFailure = "decode-failed len=\(payload.count)"
+        } else {
+            lastContextFailure = "no-payload"
+        }
 
         // الصفحة تستخدم علامات تنصيص مزدوجة عادة، وبعض النسخ تستخدم مفردة.
         let patterns = [
@@ -680,16 +738,62 @@ final class DirectInstagramService {
                     .replacingOccurrences(of: "\\'", with: "'")
                     .replacingOccurrences(of: "\"", with: "\\\"")
                 : escaped
-            guard let wrapped = ("\"" + jsonBody + "\"").data(using: .utf8),
-                  let raw = try? JSONSerialization.jsonObject(with: wrapped) as? String,
-                  let data = raw.data(using: .utf8),
-                  let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            if let context = decodeContext(jsonBody) { return context }
+            lastContextFailure = "regex-decode-failed len=\(jsonBody.count)"
+        }
+        if lastContextFailure == "no-payload" { lastContextFailure = "regex-no-match" }
+        return nil
+    }
+
+    /// يستخرج نص سلسلة contextJSON من HTML دون تعابير نمطية: يجد الكلمة،
+    /// ثم يقرأ حتى علامة التنصيص غير المهربة التي تُغلق السلسلة.
+    private func contextJSONPayload(in html: String) -> String? {
+        guard let marker = html.range(of: "contextJSON") else { return nil }
+        let start = html.distance(from: html.startIndex, to: marker.upperBound)
+        var index = start
+        let characters = Array(html)
+        let count = characters.count
+
+        // نتجاوز ما بين الكلمة وعلامة التنصيص (مسافات أو نقطتان).
+        while index < count && characters[index] != "\"" && characters[index] != "'" {
+            // لو طال البحث فالكلمة ليست مفتاحاً بل ذكراً عابراً.
+            if index - start > 40 { return nil }
+            index += 1
+        }
+        guard index < count else { return nil }
+        let quote = characters[index]
+        index += 1
+
+        var output = String()
+        output.reserveCapacity(48 * 1024)
+        while index < count {
+            let character = characters[index]
+            if character == "\\" {
+                guard index + 1 < count else { return nil }
+                output.append(character)
+                output.append(characters[index + 1])
+                index += 2
                 continue
             }
-            // بعض النسخ تغلّف الكائن بمفتاح context، وأخرى تعيده مباشرة.
-            return (root["context"] as? [String: Any]) ?? root
+            if character == quote { return output }
+            output.append(character)
+            index += 1
         }
         return nil
+    }
+
+    private func decodeContext(_ escaped: String) -> [String: Any]? {
+        // `.fragmentsAllowed` ضروري: على iOS يرفض JSONSerialization تحليل
+        // سلسلة نصية في المستوى الأعلى بلا هذا الخيار. غيابه هنا كان يجعل
+        // كل بيانات إنستغرام تصل ثم تُهمَل بصمت.
+        guard let wrapped = ("\"" + escaped + "\"").data(using: .utf8),
+              let raw = try? JSONSerialization.jsonObject(with: wrapped, options: [.fragmentsAllowed]) as? String,
+              let data = raw.data(using: .utf8),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        // بعض النسخ تغلّف الكائن بمفتاح context، وأخرى تعيده مباشرة.
+        return (root["context"] as? [String: Any]) ?? root
     }
 
     /// منشورات التضمين: مصفوفة graphql_media، أو كائن واحد، أو خلاصة
@@ -1275,7 +1379,7 @@ final class DirectInstagramService {
                       let bodyRange = Range(match.range(at: 1), in: html) else { continue }
                 let escaped = String(html[bodyRange])
                 guard let data = ("\"" + escaped + "\"").data(using: .utf8),
-                      let decoded = try? JSONSerialization.jsonObject(with: data) as? String else { continue }
+                      let decoded = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]) as? String else { continue }
                 appendJSON(decoded, into: &objects)
             }
         }
