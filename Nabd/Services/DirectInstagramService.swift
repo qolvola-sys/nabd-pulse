@@ -258,24 +258,39 @@ final class DirectInstagramService {
         let key = reference.handle.lowercased()
         var trail: [String] = []
         var best: DirectInstagramResult?
-        if let embedResult = try? await fetchEmbed(reference: reference, createdAt: createdAt) {
+        do {
+            let embedResult = try await fetchEmbed(reference: reference, createdAt: createdAt)
             trail.append("embed ✓\(embedResult.videos.count)")
-            // صفحة التضمين لا تنشر مشاهدات الفيديو. إن كانت كل مشاهدات
-            // الفيديو فيها معروفة فعلًا فلا داعي لمزيد من الطلبات.
-            let hasVideoViews = embedResult.videos.contains {
-                $0.isVideo && $0.views > 0 && $0.viewsExact
-            }
-            if !embedResult.videos.isEmpty && hasVideoViews {
+            // صفحة التضمين لا تنشر مشاهدات الفيديو، وإنستغرام لا يعطي
+            // المشاهدات للزوار من أي مصدر. فإذا وصلت المنشورات انتهى الأمر
+            // هنا، بدل إهدار ثوانٍ في طلبات سترفض بـ429.
+            if !embedResult.videos.isEmpty {
                 note(trail.joined(separator: " · "), for: key)
                 return embedResult
             }
             best = embedResult
-        } else {
+        } catch DirectInstagramError.notFound {
+            // الحساب غير موجود فعلاً: لا فائدة من تجربة بقية المصادر.
+            throw DirectInstagramError.notFound
+        } catch {
             trail.append("embed ✗")
         }
 
-        // ١) واجهة الويب العامة: أدق أرقام ومشاهدات الفيديو عندما تسمح.
-        // تُجرَّب حتى لو نجح التضمين، لأن التضمين يعطي الإعجابات فقط.
+        // ١) مرحّل خارجي يقرأ صفحة التضمين من شبكته هو. هذا هو المسار الذي
+        // يعمل عندما تعطي الشبكة المحلية نسخة محدودة بلا منشورات. يوضع
+        // مبكراً لأن الاستجابة تأتي في ثانية أو ثانيتين.
+        if let relayResult = try? await fetchRelay(reference: reference, createdAt: createdAt) {
+            trail.append("relay ✓\(relayResult.videos.count)")
+            if !relayResult.videos.isEmpty {
+                note(trail.joined(separator: " · "), for: key)
+                return relayResult
+            }
+            if best == nil || (best?.videos.isEmpty ?? true) { best = relayResult }
+        } else {
+            trail.append("relay ✗")
+        }
+
+        // ٢) واجهة الويب العامة: أدق أرقام ومشاهدات الفيديو عندما تسمح.
         await warmUpIfNeeded()
         if let apiResult = try? await fetchAPI(reference: reference, createdAt: createdAt) {
             if !apiResult.videos.isEmpty {
@@ -290,7 +305,7 @@ final class DirectInstagramService {
             trail.append("api ✗")
         }
 
-        // ٢) صفحة الحساب وبياناتها المدمجة، ثم وسوم og كحد أدنى.
+        // ٣) صفحة الحساب وبياناتها المدمجة، ثم وسوم og كحد أدنى.
         if let htmlResult = try? await fetchHTML(reference: reference, createdAt: createdAt) {
             if !htmlResult.videos.isEmpty {
                 trail.append("html ✓\(htmlResult.videos.count)")
@@ -303,32 +318,19 @@ final class DirectInstagramService {
             trail.append("html ✗")
         }
 
-        // ٣) محرك Safari داخل التطبيق: يتجاوز فحص بصمة الاتصال الذي يحجب
-        // URLSession عند بعض الشبكات. آخر محاولة لأنها الأبطأ.
-        if best == nil || (best?.videos.isEmpty ?? true) {
-            if let webResult = try? await fetchWeb(reference: reference, createdAt: createdAt) {
-                if !webResult.videos.isEmpty || webResult.account.followers > 0 {
-                    trail.append("web ✓\(webResult.videos.count)")
-                    note(trail.joined(separator: " · "), for: key)
-                    return webResult
-                }
-                trail.append("web ✓0")
-                if best == nil { best = webResult }
-            } else {
-                trail.append("web ✗")
-            }
-        }
-
-        // ٤) مرحّل عام (proxy): يقرأ الصفحة من عنوان IP آخر. يُستخدم فقط
-        // عند فشل كل ما سبق، لأن بعض الشبكات تحجب إنستغرام بالكامل.
-        // لا يُرسل إلا اسم الحساب العام.
-        if best == nil || (best?.videos.isEmpty ?? true) {
-            if let relayResult = try? await fetchRelay(reference: reference, createdAt: createdAt) {
-                trail.append("relay ✓\(relayResult.videos.count)")
+        // ٤) محرك Safari داخل التطبيق: يتجاوز فحص بصمة الاتصال الذي يحجب
+        // URLSession عند بعض الشبكات. آخر محاولة لأنها الأبطأ، وتُجرَّب
+        // دائماً لأن المصادر السابقة قد تعيد ملفاً بلا منشورات.
+        if let webResult = try? await fetchWeb(reference: reference, createdAt: createdAt) {
+            if !webResult.videos.isEmpty || webResult.account.followers > 0 {
+                trail.append("web ✓\(webResult.videos.count)")
                 note(trail.joined(separator: " · "), for: key)
-                return relayResult
+                return webResult
             }
-            trail.append("relay ✗")
+            trail.append("web ✓0")
+            if best == nil { best = webResult }
+        } else {
+            trail.append("web ✗")
         }
 
         note(trail.joined(separator: " · "), for: key)
@@ -688,7 +690,7 @@ final class DirectInstagramService {
         guard !handle.isEmpty else { throw DirectInstagramError.invalidLink }
 
         if let embedURL = URL(string: "https://www.instagram.com/\(handle)/embed/"),
-           let html = try? await WebPageLoader.shared.html(from: embedURL, userAgent: userAgent),
+           let html = try? await WebPageLoader.shared.html(from: embedURL, userAgent: userAgent, timeout: 15),
            let context = embedContext(in: html) {
             return try makeEmbedResult(context: context, reference: reference, createdAt: createdAt)
         }
@@ -696,52 +698,82 @@ final class DirectInstagramService {
         guard let profileURL = URL(string: "https://www.instagram.com/\(handle)/") else {
             throw DirectInstagramError.invalidLink
         }
-        let html = try await WebPageLoader.shared.html(from: profileURL, userAgent: userAgent)
+        let html = try await WebPageLoader.shared.html(from: profileURL, userAgent: userAgent, timeout: 15)
         return try parseProfileHTML(html, reference: reference, createdAt: createdAt)
     }
 
-    /// آخر حل: قراءة صفحة التضمين عبر مرحّل عام يخرج بعنوان IP مختلف.
-    /// مفيد عندما تحجب الشبكة إنستغرام كلياً. لا يُرسل إلا اسم الحساب
-    /// العام، ولا يُستخدم إلا بعد فشل كل المصادر السابقة.
+    /// قراءة صفحة التضمين عبر خدمة تقرأ الموقع من شبكتها هي، لا من شبكة
+    /// المستخدم. هذا هو المسار الذي ينجح عندما يعطي إنستغرام جهاز المستخدم
+    /// نسخة محدودة (اسم وصورة بلا منشورات) أو يحجب الطلبات المباشرة.
+    /// لا يُرسل إلا اسم الحساب العام، وهو معلومة منشورة أصلاً.
     private func fetchRelay(reference: InstagramProfileReference, createdAt: String?) async throws -> DirectInstagramResult {
         let handle = reference.handle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !handle.isEmpty else { throw DirectInstagramError.invalidLink }
         guard let target = URL(string: "https://www.instagram.com/\(handle)/embed/") else {
             throw DirectInstagramError.invalidLink
         }
-        let encoded = target.absoluteString.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed)
-            ?? target.absoluteString
-
-        let relays = [
-            "https://api.allorigins.win/raw?url=\(encoded)",
-            "https://api.codetabs.com/v1/proxy?quest=\(encoded)",
-        ]
-
+        let raw = target.absoluteString
         var lastError: DirectInstagramError = .blocked
-        for relay in relays {
-            guard let url = URL(string: relay) else { continue }
-            var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 20)
-            request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
-            request.setValue("text/html,application/xhtml+xml", forHTTPHeaderField: "Accept")
-            request.setValue("en-US,en;q=0.9", forHTTPHeaderField: "Accept-Language")
+
+        // أ) خدمة قراءة صفحات تعيد HTML كاملاً بعد تنفيذ JavaScript.
+        //    هي الأسرع (ثانية تقريباً) وأكثر ما نجح في الاختبار.
+        if let url = URL(string: "https://r.jina.ai/\(raw)") {
             do {
-                let (data, response) = try await session.data(for: request)
-                guard let http = response as? HTTPURLResponse,
-                      (200..<300).contains(http.statusCode),
-                      let html = String(data: data, encoding: .utf8) else {
-                    lastError = .blocked
-                    continue
+                let html = try await relayGet(url, accept: "text/html")
+                if let context = embedContext(in: html) {
+                    return try makeEmbedResult(context: context, reference: reference, createdAt: createdAt)
                 }
-                guard let context = embedContext(in: html) else {
-                    lastError = .badResponse
-                    continue
-                }
-                return try makeEmbedResult(context: context, reference: reference, createdAt: createdAt)
+                lastError = .badResponse
             } catch {
                 lastError = .blocked
             }
         }
+
+        // ب) خدمة ثانية تعيد الصفحة داخل JSON. تُستخدم إن فشلت الأولى أو
+        //    استنفدت حصتها المؤقتة.
+        var components = URLComponents(string: "https://api.microlink.io/")
+        components?.queryItems = [
+            URLQueryItem(name: "url", value: raw),
+            URLQueryItem(name: "meta", value: "false"),
+            URLQueryItem(name: "data.html.selector", value: "body"),
+        ]
+        if let url = components?.url {
+            do {
+                let body = try await relayGet(url, accept: "application/json")
+                if let data = body.data(using: .utf8),
+                   let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let payload = root["data"] as? [String: Any],
+                   let html = payload["html"] as? String,
+                   let context = embedContext(in: html) {
+                    return try makeEmbedResult(context: context, reference: reference, createdAt: createdAt)
+                }
+                // بعض الاستجابات تعيد HTML خاماً بدل JSON.
+                if let context = embedContext(in: body) {
+                    return try makeEmbedResult(context: context, reference: reference, createdAt: createdAt)
+                }
+                lastError = .badResponse
+            } catch {
+                lastError = .blocked
+            }
+        }
+
         throw lastError
+    }
+
+    private func relayGet(_ url: URL, accept: String) async throws -> String {
+        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 25)
+        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue(accept, forHTTPHeaderField: "Accept")
+        request.setValue("en-US,en;q=0.9", forHTTPHeaderField: "Accept-Language")
+        // ترويسة خاصة بخدمة القراءة: أعطنا HTML الصفحة لا نصها المختصر.
+        request.setValue("html", forHTTPHeaderField: "x-respond-with")
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse,
+              (200..<300).contains(http.statusCode),
+              let text = String(data: data, encoding: .utf8) else {
+            throw DirectInstagramError.blocked
+        }
+        return text
     }
 
     private func parseProfileHTML(

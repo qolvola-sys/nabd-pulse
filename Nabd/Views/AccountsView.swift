@@ -1169,8 +1169,9 @@ struct AccountRow: View {
                         Text(DirectInstagramService.shared.diagnostic(for: account.handle))
                             .font(.system(size: 7.5, design: .monospaced))
                             .foregroundColor(Theme.textTertiary)
-                            .lineLimit(2)
-                            .minimumScaleFactor(0.8)
+                            .lineLimit(3)
+                            .minimumScaleFactor(0.7)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
 

@@ -252,7 +252,8 @@ struct AccountDetailView: View {
                     .font(.system(size: 9, design: .monospaced))
                     .foregroundColor(Theme.textTertiary)
                     .multilineTextAlignment(.center)
-                    .lineLimit(3)
+                    .lineLimit(4)
+                    .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, 8)
             }
         }
