@@ -203,6 +203,17 @@ final class DirectInstagramService {
     /// بعد تكرار 429 نتوقف عن محاولة واجهة الويب مؤقتاً ونستخدم صفحة
     /// التضمين مباشرة، بدل إهدار ثوانٍ لكل حساب في نفس المزامنة.
     private var apiBlockedUntil = Date.distantPast
+    /// نتيجة آخر محاولة لكل حساب: أي مصدر نجح وأيها فشل. تُعرض في شاشة
+    /// الحساب عند تعذّر القراءة، حتى نعرف سبب الصفر بدل التخمين.
+    private var diagnostics: [String: String] = [:]
+
+    func diagnostic(for handle: String) -> String {
+        diagnostics[handle.lowercased()] ?? "لم تُجرَّب بعد"
+    }
+
+    private func note(_ text: String, for handle: String) {
+        diagnostics[handle.lowercased()] = text
+    }
 
     private init() {
         let configuration = URLSessionConfiguration.default
@@ -244,31 +255,71 @@ final class DirectInstagramService {
         // ٠) صفحة التضمين العامة أولاً: لا تحتاج كوكيز ولا تسجيل دخول،
         // وتعرض الملف وآخر منشوراته مع الإعجابات الحقيقية. البدء بها يمنع
         // طلبات الواجهة من استنفاد حصة الشبكة وحجب القراءة كلها.
+        let key = reference.handle.lowercased()
+        var trail: [String] = []
         var best: DirectInstagramResult?
         if let embedResult = try? await fetchEmbed(reference: reference, createdAt: createdAt) {
+            trail.append("embed ✓\(embedResult.videos.count)")
             // صفحة التضمين لا تنشر مشاهدات الفيديو. إن كانت كل مشاهدات
             // الفيديو فيها معروفة فعلًا فلا داعي لمزيد من الطلبات.
             let hasVideoViews = embedResult.videos.contains {
                 $0.isVideo && $0.views > 0 && $0.viewsExact
             }
-            if !embedResult.videos.isEmpty && hasVideoViews { return embedResult }
+            if !embedResult.videos.isEmpty && hasVideoViews {
+                note(trail.joined(separator: " · "), for: key)
+                return embedResult
+            }
             best = embedResult
+        } else {
+            trail.append("embed ✗")
         }
 
         // ١) واجهة الويب العامة: أدق أرقام ومشاهدات الفيديو عندما تسمح.
         // تُجرَّب حتى لو نجح التضمين، لأن التضمين يعطي الإعجابات فقط.
         await warmUpIfNeeded()
         if let apiResult = try? await fetchAPI(reference: reference, createdAt: createdAt) {
-            if !apiResult.videos.isEmpty { return apiResult }
+            if !apiResult.videos.isEmpty {
+                trail.append("api ✓\(apiResult.videos.count)")
+                note(trail.joined(separator: " · "), for: key)
+                return apiResult
+            }
+            trail.append("api ✓0")
             // الملف قُرئ لكن المنشورات لم تُرجع: نجرّب صفحة الحساب قبل الاكتفاء به.
             if best == nil || (best?.videos.isEmpty ?? true) { best = apiResult }
+        } else {
+            trail.append("api ✗")
         }
 
         // ٢) صفحة الحساب وبياناتها المدمجة، ثم وسوم og كحد أدنى.
         if let htmlResult = try? await fetchHTML(reference: reference, createdAt: createdAt) {
-            if !htmlResult.videos.isEmpty { return htmlResult }
+            if !htmlResult.videos.isEmpty {
+                trail.append("html ✓\(htmlResult.videos.count)")
+                note(trail.joined(separator: " · "), for: key)
+                return htmlResult
+            }
+            trail.append("html ✓0")
             if best == nil || (best?.videos.isEmpty ?? true) { best = htmlResult }
+        } else {
+            trail.append("html ✗")
         }
+
+        // ٣) محرك Safari داخل التطبيق: يتجاوز فحص بصمة الاتصال الذي يحجب
+        // URLSession عند بعض الشبكات. آخر محاولة لأنها الأبطأ.
+        if best == nil || (best?.videos.isEmpty ?? true) {
+            if let webResult = try? await fetchWeb(reference: reference, createdAt: createdAt) {
+                if !webResult.videos.isEmpty || webResult.account.followers > 0 {
+                    trail.append("web ✓\(webResult.videos.count)")
+                    note(trail.joined(separator: " · "), for: key)
+                    return webResult
+                }
+                trail.append("web ✓0")
+                if best == nil { best = webResult }
+            } else {
+                trail.append("web ✗")
+            }
+        }
+
+        note(trail.joined(separator: " · "), for: key)
 
         // لا منشورات من أي مصدر: نعيد أفضل ما قُرئ بدل إسقاطه.
         if let best { return best }
@@ -614,7 +665,34 @@ final class DirectInstagramService {
 
     private func fetchHTML(reference: InstagramProfileReference, createdAt: String?) async throws -> DirectInstagramResult {
         let page = try await load(reference.inputURL)
-        let html = page.html
+        return try parseProfileHTML(page.html, reference: reference, createdAt: createdAt)
+    }
+
+    /// يقرأ صفحة الملف نفسها عبر محرك Safari داخل التطبيق. إنستغرام يفحص
+    /// بصمة الاتصال، وطلبات URLSession تُحجب على بعض الشبكات بينما
+    /// WKWebView يمرّ كزيارة عادية. نجرّب التضمين أولاً لأنه أخف وأسرع.
+    private func fetchWeb(reference: InstagramProfileReference, createdAt: String?) async throws -> DirectInstagramResult {
+        let handle = reference.handle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !handle.isEmpty else { throw DirectInstagramError.invalidLink }
+
+        if let embedURL = URL(string: "https://www.instagram.com/\(handle)/embed/"),
+           let html = try? await WebPageLoader.shared.html(from: embedURL, userAgent: userAgent),
+           let context = embedContext(in: html) {
+            return try makeEmbedResult(context: context, reference: reference, createdAt: createdAt)
+        }
+
+        guard let profileURL = URL(string: "https://www.instagram.com/\(handle)/") else {
+            throw DirectInstagramError.invalidLink
+        }
+        let html = try await WebPageLoader.shared.html(from: profileURL, userAgent: userAgent)
+        return try parseProfileHTML(html, reference: reference, createdAt: createdAt)
+    }
+
+    private func parseProfileHTML(
+        _ html: String,
+        reference: InstagramProfileReference,
+        createdAt: String?
+    ) throws -> DirectInstagramResult {
         if html.contains("Sorry, this page isn't available") ||
             html.contains("الصفحة غير متوفرة") ||
             html.contains("Page Not Found") {

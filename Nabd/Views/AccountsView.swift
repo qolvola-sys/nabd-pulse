@@ -753,7 +753,8 @@ struct AccountsView: View {
     /// لا توجد منشورات مقروءة لأي حساب في هذه المنصة بعد، فالأرقام
     /// المعروضة ستكون أصفاراً غير حقيقية. نعرض «—» بدلاً منها.
     private var platformNumbersUnavailable: Bool {
-        platform != .tiktok
+        if platform == .instagram && platformSummary.loadedVideos == 0 { return true }
+        return platform != .tiktok
             && platformSummary.loadedVideos == 0
             && platformAccounts.contains { $0.status == "pending" }
     }
@@ -1095,7 +1096,10 @@ struct AccountRow: View {
 
     /// الأرقام غير متاحة فعلاً عندما لم تُقرأ أي منشورات بعد.
     private var numbersUnavailable: Bool {
-        account.status == "pending" && account.fetchedVideos == 0
+        if account.isInstagram {
+            return account.fetchedVideos == 0
+        }
+        return account.status == "pending" && account.fetchedVideos == 0
     }
 
     /// إنستغرام قد يعطي الإعجابات دون مشاهدات الفيديو؛ الصفر هنا غير مؤكد.

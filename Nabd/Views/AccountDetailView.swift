@@ -29,7 +29,12 @@ struct AccountDetailView: View {
 
     /// لم تُقرأ أي منشورات بعد: لا نعرض أصفاراً تبدو أرقاماً حقيقية.
     private var numbersUnavailable: Bool {
-        current.status == "pending" && current.fetchedVideos == 0
+        if current.isInstagram {
+            // إنستغرام: كل أرقام النوافذ تُحسب من المنشورات، فإن لم تُقرأ
+            // منشورات فلا معنى للصفر مهما كانت الحالة المعروضة.
+            return current.fetchedVideos == 0
+        }
+        return current.status == "pending" && current.fetchedVideos == 0
     }
 
     /// إنستغرام قد يعطي الإعجابات دون مشاهدات الفيديو، فلا نعرض صفراً مضللاً.
@@ -238,6 +243,17 @@ struct AccountDetailView: View {
                 if current.isVerified {
                     Chip(text: "موثّق", color: Theme.cyan, icon: "checkmark.seal.fill")
                 }
+            }
+
+            // تشخيص ظاهر فقط عند فشل قراءة منشورات إنستغرام: يوضّح أي
+            // مصدر نجح وأيها فشل، حتى لا يبقى الصفر بلا تفسير.
+            if current.isInstagram && numbersUnavailable {
+                Text("تشخيص القراءة: \(DirectInstagramService.shared.diagnostic(for: current.handle))")
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundColor(Theme.textTertiary)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(3)
+                    .padding(.horizontal, 8)
             }
         }
         .frame(maxWidth: .infinity)
