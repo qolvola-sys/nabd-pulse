@@ -13,7 +13,7 @@ enum DataSource: Equatable {
         switch self {
         case .demo: return "بيانات تجريبية"
         case .live: return "متصل بالخادم"
-        case .direct: return "بيانات TikTok حقيقية"
+        case .direct: return "بيانات مباشرة"
         case .cache: return "آخر نسخة محفوظة"
         case .empty: return "لا توجد بيانات"
         }
@@ -96,6 +96,7 @@ final class AppStore: ObservableObject {
     private let oauth = OAuthSession()
     private let direct = DirectTikTokService.shared
     private let facebook = DirectFacebookService.shared
+    private let instagram = DirectInstagramService.shared
     private var directVideos: [String: [VideoItem]] = [:]
     private var didBootstrap = false
     private var lastAutoRefresh: Date?
@@ -551,6 +552,14 @@ final class AppStore: ObservableObject {
             )
             return (result.account, result.videos)
         }
+        if account.platform == .instagram {
+            let result = try await instagram.fetch(
+                handle: account.handle,
+                url: account.url,
+                createdAt: account.createdAt
+            )
+            return (result.account, result.videos)
+        }
         let result = try await direct.fetch(
             handle: account.handle,
             knownPosts: account.posts,
@@ -567,6 +576,10 @@ final class AppStore: ObservableObject {
     ) async throws -> (account: Account, videos: [VideoItem]) {
         if platform == .facebook {
             let result = try await facebook.fetch(handle: handle, url: url, createdAt: createdAt)
+            return (result.account, result.videos)
+        }
+        if platform == .instagram {
+            let result = try await instagram.fetch(handle: handle, url: url, createdAt: createdAt)
             return (result.account, result.videos)
         }
         let result = try await direct.fetch(handle: handle, createdAt: createdAt)
@@ -666,13 +679,18 @@ final class AppStore: ObservableObject {
             merged.posts = old.posts
         }
         merged.views = old.views
+        merged.videoLikes = old.videoLikes
+        merged.comments = old.comments
+        merged.shares = old.shares
         merged.avgViews = old.avgViews
         merged.fetchedVideos = old.fetchedVideos
         merged.coverage = old.coverage
         merged.posts24h = old.posts24h
         merged.views24h = old.views24h
+        merged.likes24h = old.likes24h
         merged.posts7d = old.posts7d
         merged.weeklyViews = old.weeklyViews
+        merged.likes7d = old.likes7d
         merged.viewsExact = old.viewsExact
         merged.dailyComplete = old.dailyComplete
         merged.dailyViewsExact = old.dailyViewsExact
@@ -680,6 +698,15 @@ final class AppStore: ObservableObject {
         merged.weeklyViewsExact = old.weeklyViewsExact
         merged.allPostsLoaded = old.allPostsLoaded
         return merged
+    }
+
+    /// أسماء المنصات الموجودة حالياً، لعرضها في رسائل المزامنة.
+    private var platformListLabel: String {
+        let present = AccountPlatform.allCases.filter { platform in
+            accounts.contains { $0.platform == platform }
+        }
+        guard !present.isEmpty else { return "المنصات" }
+        return present.map(\.title).joined(separator: " + ")
     }
 
     func syncAll() async {
@@ -699,10 +726,7 @@ final class AppStore: ObservableObject {
         if isDirect {
             await refreshDirect(showSpinner: false)
             if lastDirectRefreshSucceeded {
-                let hasTikTok = accounts.contains { $0.platform == .tiktok }
-                let hasFacebook = accounts.contains { $0.platform == .facebook }
-                let sourceName = hasTikTok && hasFacebook ? "TikTok وفيسبوك" : (hasFacebook ? "فيسبوك" : "TikTok")
-                showToast("تم تحديث \(accounts.count) حساباً من \(sourceName)", .success)
+                showToast("تم تحديث \(accounts.count) حساباً من \(platformListLabel)", .success)
                 haptic(.success)
             } else if !accounts.isEmpty {
                 showToast("تم عرض أحدث الإحصاءات المحفوظة", .info)
@@ -754,7 +778,7 @@ final class AppStore: ObservableObject {
                     directVideos[fresh.videoCacheKey] = result.videos
                 }
                 saveDirectAccounts()
-                showToast("تم تحديث \(account.platform == .facebook ? "صفحة" : "@")\(account.handle)", .success)
+                showToast("تم تحديث \(account.platform.accountNoun) \(account.handleLabel)", .success)
                 haptic(.success)
             } catch {
                 if let index = accounts.firstIndex(where: { $0.id == account.id }) {
@@ -763,7 +787,7 @@ final class AppStore: ObservableObject {
                     summary = Summary.make(from: accounts)
                 }
                 saveDirectAccounts()
-                showToast("تم الاحتفاظ بآخر إحصاءات \(account.platform == .facebook ? "صفحة" : "@")\(account.handle)", .info)
+                showToast("تم الاحتفاظ بآخر إحصاءات \(account.platform.accountNoun) \(account.handleLabel)", .info)
                 haptic(.impact)
             }
             return
@@ -796,6 +820,10 @@ final class AppStore: ObservableObject {
         }
         if platform == .facebook {
             showToast("إضافة فيسبوك تعمل في الوضع المباشر — أوقف الخادم والوضع التجريبي أولاً", .info)
+            return nil
+        }
+        if platform == .instagram {
+            showToast("إضافة إنستغرام تعمل في الوضع المباشر — أوقف الخادم والوضع التجريبي أولاً", .info)
             return nil
         }
         guard let client else {
@@ -837,20 +865,32 @@ final class AppStore: ObservableObject {
                 continue
             }
 
-            let idPrefix = platform == .facebook ? "direct-facebook-" : "direct-"
+            let idPrefix: String
+            switch platform {
+            case .facebook: idPrefix = "direct-facebook-"
+            case .instagram: idPrefix = "direct-instagram-"
+            case .tiktok: idPrefix = "direct-"
+            }
             let accountID = idPrefix + handle
             let facebookReference = platform == .facebook
                 ? FacebookPageParser.reference(from: raw)
                 : nil
+            let instagramReference = platform == .instagram
+                ? InstagramLinkParser.reference(from: raw)
+                : nil
             let profileURL: String
             if let facebookReference {
                 profileURL = facebookReference.canonicalURL
+            } else if let instagramReference {
+                profileURL = instagramReference.canonicalURL
             } else {
-                profileURL = platform.profileURLPrefix + handle
+                profileURL = platform.profileURL(for: handle)
             }
             let placeholderName: String
             if platform == .facebook {
                 placeholderName = facebookReference?.needsResolution == true ? "صفحة فيسبوك" : handle
+            } else if platform == .instagram {
+                placeholderName = instagramReference?.needsResolution == true ? "حساب إنستغرام" : "@\(handle)"
             } else {
                 placeholderName = "@\(handle)"
             }
@@ -879,12 +919,12 @@ final class AppStore: ObservableObject {
                     url: profileURL,
                     createdAt: placeholder.createdAt
                 )
-                // قد يتغيّر معرّف فيسبوك بعد قراءة الصفحة (اسم مستخدم بدل رقم).
-                // نمنع التكرار إذا كانت الصفحة نفسها مضافة بالفعل.
-                if platform == .facebook,
+                // قد يتغيّر معرّف فيسبوك/إنستغرام بعد قراءة الصفحة (اسم مستخدم
+                // بدل رابط مشاركة). نمنع التكرار إذا كان الحساب نفسه مضافاً.
+                if platform != .tiktok,
                    let duplicate = accounts.first(where: {
                        $0.id != accountID &&
-                       $0.platform == .facebook &&
+                       $0.platform == platform &&
                        ($0.id == result.account.id ||
                         $0.handle.caseInsensitiveCompare(result.account.handle) == .orderedSame)
                    }) {
@@ -897,10 +937,10 @@ final class AppStore: ObservableObject {
                     skipped.append(SkippedAccount(handle: duplicate.handle, reason: "duplicate"))
                     continue
                 }
-                // روابط المشاركة قد تصل إلى اسم الصفحة الحقيقي بعد الجلب،
+                // روابط المشاركة قد تصل إلى اسم الحساب الحقيقي بعد الجلب،
                 // فننقل المعرّف المؤقت إلى المعرّف النهائي قبل الحفظ.
                 let finalID = result.account.id
-                if platform == .facebook, finalID != accountID {
+                if platform != .tiktok, finalID != accountID {
                     #if MUTABAA
                     if let spaceIndex = spaces.firstIndex(where: { $0.id == activeSpaceID }),
                        let groupID = spaces[spaceIndex].groupMembership.removeValue(forKey: accountID) {
@@ -944,7 +984,7 @@ final class AppStore: ObservableObject {
         saveDirectAccounts()
 
         let ready = created.filter { $0.status == "public" || $0.status == "ok" }.count
-        let unit = platform == .facebook ? "صفحة" : "حساب"
+        let unit = platform.accountNoun
         if !created.isEmpty {
             if ready == 0 {
                 showToast("أُضيفت \(created.count) \(unit) — تعذّرت قراءة الأرقام الآن", .info)
@@ -958,7 +998,7 @@ final class AppStore: ObservableObject {
             showToast(failures.first ?? "لم نتعرف على أي رابط صالح", .error)
             haptic(.error)
         } else if !skipped.isEmpty {
-            showToast(platform == .facebook ? "الصفحات مضافة مسبقاً" : "الحسابات مضافة مسبقاً", .info)
+            showToast("\(platform.accountsNoun) مضافة مسبقاً", .info)
         }
 
         return AddAccountsResponse(
@@ -973,6 +1013,12 @@ final class AppStore: ObservableObject {
     static func handle(from raw: String, platform: AccountPlatform = .tiktok) -> String? {
         if platform == .facebook {
             return FacebookPageParser.reference(from: raw)?.handle
+        }
+        if platform == .instagram {
+            if let reference = InstagramLinkParser.reference(from: raw) {
+                return reference.handle
+            }
+            return InstagramLinkParser.referenceForHandle(raw)?.handle
         }
         var value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty else { return nil }
@@ -1062,7 +1108,7 @@ final class AppStore: ObservableObject {
             #endif
             summary = Summary.make(from: accounts)
             saveDirectAccounts()
-            showToast("تم حذف \(account.platform == .facebook ? "صفحة" : "@")\(account.handle)", .success)
+            showToast("تم حذف \(account.platform.accountNoun) \(account.handleLabel)", .success)
             haptic(.success)
             return
         }
@@ -1097,8 +1143,7 @@ final class AppStore: ObservableObject {
 
     func connect(_ account: Account) async {
         if isDirect {
-            let source = account.platform == .facebook ? "فيسبوك" : "TikTok"
-            showToast("الإحصاءات تُقرأ مباشرة من \(source) — لا حاجة لتسجيل الدخول", .info)
+            showToast("الإحصاءات تُقرأ مباشرة من \(account.platform.title) — لا حاجة لتسجيل الدخول", .info)
             return
         }
         guard !isDemo else {

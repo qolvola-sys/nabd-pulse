@@ -13,10 +13,15 @@ struct SpacesBar: View {
     @State private var showManager = false
     @State private var showNewSpace = false
     @State private var showFacebook = false
+    @State private var showInstagram = false
     @State private var newSpaceName = ""
 
     private var facebookCount: Int {
         store.accounts.filter { $0.platform == .facebook }.count
+    }
+
+    private var instagramCount: Int {
+        store.accounts.filter { $0.platform == .instagram }.count
     }
 
     var body: some View {
@@ -44,34 +49,19 @@ struct SpacesBar: View {
                 store.haptic(.selection)
                 showFacebook = true
             } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: "globe")
-                        .font(.system(size: 11, weight: .bold))
-                    Text("فيسبوك")
-                        .font(.system(size: 11.5, weight: .bold))
-                    if facebookCount > 0 {
-                        Text(Num.full(Int64(facebookCount)))
-                            .font(.system(size: 8.5, weight: .bold, design: .rounded))
-                            .foregroundColor(Theme.cyan)
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 1)
-                            .background(Capsule().fill(Theme.cyan.opacity(0.14)))
-                    }
-                }
-                .foregroundColor(Theme.cyan)
-                .padding(.horizontal, 9)
-                .frame(height: 38)
-                .background(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(Theme.cyan.opacity(0.08))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .strokeBorder(Theme.cyan.opacity(0.24), lineWidth: 1)
-                )
+                platformBarLabel(.facebook, count: facebookCount, accent: Theme.cyan)
             }
             .buttonStyle(PressableStyle(scale: 0.97))
             .accessibilityIdentifier("open-facebook")
+
+            Button {
+                store.haptic(.selection)
+                showInstagram = true
+            } label: {
+                platformBarLabel(.instagram, count: instagramCount, accent: Theme.pink)
+            }
+            .buttonStyle(PressableStyle(scale: 0.97))
+            .accessibilityIdentifier("open-instagram")
 
             if store.spacesEnabled {
                 Menu {
@@ -154,6 +144,13 @@ struct SpacesBar: View {
                     .environmentObject(store)
             }
         }
+        .fullScreenCover(isPresented: $showInstagram) {
+            ZStack {
+                AppBackground()
+                AccountsView(platform: .instagram)
+                    .environmentObject(store)
+            }
+        }
         .alert("مساحة جديدة", isPresented: $showNewSpace) {
             TextField("اسم المساحة", text: $newSpaceName)
             Button("إضافة") {
@@ -165,6 +162,34 @@ struct SpacesBar: View {
         } message: {
             Text("لكل مساحة حساباتها وإحصاءاتها وترتيبها المستقل.")
         }
+    }
+
+    private func platformBarLabel(_ platform: AccountPlatform, count: Int, accent: Color) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: platform.icon)
+                .font(.system(size: 11, weight: .bold))
+            Text(platform.title)
+                .font(.system(size: 11.5, weight: .bold))
+            if count > 0 {
+                Text(Num.full(Int64(count)))
+                    .font(.system(size: 8.5, weight: .bold, design: .rounded))
+                    .foregroundColor(accent)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .background(Capsule().fill(accent.opacity(0.14)))
+            }
+        }
+        .foregroundColor(accent)
+        .padding(.horizontal, 9)
+        .frame(height: 38)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(accent.opacity(0.08))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(accent.opacity(0.24), lineWidth: 1)
+        )
     }
 
     private func spaceChip(_ space: AccountSpace) -> some View {

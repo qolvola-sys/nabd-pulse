@@ -303,6 +303,8 @@ final class DirectTikTokService {
         let views24h = recent.reduce(Int64(0)) { $0 + $1.views }
         let weeklyViews = weekly.reduce(Int64(0)) { $0 + $1.views }
         let totalViews = videos.reduce(Int64(0)) { $0 + $1.views }
+        let likes24h = recent.reduce(Int64(0)) { $0 + $1.likes }
+        let likes7d = weekly.reduce(Int64(0)) { $0 + $1.likes }
 
         let allPostsLoaded = videos.isEmpty
             ? totalPosts == 0
@@ -341,14 +343,16 @@ final class DirectTikTokService {
             likes: abs(heartCount),
             posts: totalPosts > 0 ? totalPosts : videos.count,
             views: totalViews,
-            videoLikes: 0,
-            comments: 0,
-            shares: 0,
+            videoLikes: videos.reduce(Int64(0)) { $0 + $1.likes },
+            comments: videos.reduce(Int64(0)) { $0 + $1.comments },
+            shares: videos.reduce(Int64(0)) { $0 + $1.shares },
             fetchedVideos: videos.count,
             posts24h: recent.count,
             views24h: views24h,
+            likes24h: likes24h,
             posts7d: weekly.count,
             weeklyViews: weeklyViews,
+            likes7d: likes7d,
             avgViews: videos.isEmpty ? 0 : totalViews / Int64(videos.count),
             coverage: totalPosts > 0 ? min(1, Double(videos.count) / Double(totalPosts)) : (videos.isEmpty ? 0 : 1),
             connected: false,
@@ -660,8 +664,13 @@ final class DirectTikTokService {
         account.fetchedVideos = videos.count
         account.posts24h = daily.count
         account.views24h = daily.reduce(Int64(0)) { $0 + $1.views }
+        account.likes24h = daily.reduce(Int64(0)) { $0 + $1.likes }
         account.posts7d = weekly.count
         account.weeklyViews = weekly.reduce(Int64(0)) { $0 + $1.views }
+        account.likes7d = weekly.reduce(Int64(0)) { $0 + $1.likes }
+        account.videoLikes = videos.reduce(Int64(0)) { $0 + $1.likes }
+        account.comments = videos.reduce(Int64(0)) { $0 + $1.comments }
+        account.shares = videos.reduce(Int64(0)) { $0 + $1.shares }
         account.avgViews = totalViews / Int64(videos.count)
         if account.posts > 0 {
             account.coverage = min(1, Double(videos.count) / Double(account.posts))

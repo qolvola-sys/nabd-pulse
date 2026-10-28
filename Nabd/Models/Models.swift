@@ -70,6 +70,7 @@ extension KeyedDecodingContainer {
 enum AccountPlatform: String, Codable, CaseIterable, Identifiable, Hashable {
     case tiktok
     case facebook
+    case instagram
 
     var id: String { rawValue }
 
@@ -77,6 +78,7 @@ enum AccountPlatform: String, Codable, CaseIterable, Identifiable, Hashable {
         switch self {
         case .tiktok: return "TikTok"
         case .facebook: return "فيسبوك"
+        case .instagram: return "إنستغرام"
         }
     }
 
@@ -84,6 +86,7 @@ enum AccountPlatform: String, Codable, CaseIterable, Identifiable, Hashable {
         switch self {
         case .tiktok: return "play.rectangle.fill"
         case .facebook: return "globe"
+        case .instagram: return "camera.fill"
         }
     }
 
@@ -91,6 +94,7 @@ enum AccountPlatform: String, Codable, CaseIterable, Identifiable, Hashable {
         switch self {
         case .tiktok: return "تيك توك"
         case .facebook: return "فيسبوك"
+        case .instagram: return "إنستغرام"
         }
     }
 
@@ -98,6 +102,26 @@ enum AccountPlatform: String, Codable, CaseIterable, Identifiable, Hashable {
         switch self {
         case .tiktok: return "https://www.tiktok.com/@"
         case .facebook: return "https://www.facebook.com/"
+        case .instagram: return "https://www.instagram.com/"
+        }
+    }
+
+    /// فيسبوك يستخدم «صفحة» بدل «حساب» في كل النصوص.
+    var isPageBased: Bool { self == .facebook }
+
+    var accountNoun: String { isPageBased ? "صفحة" : "حساب" }
+
+    var accountsNoun: String { isPageBased ? "صفحات" : "حسابات" }
+
+    func profileURL(for handle: String) -> String {
+        profileURLPrefix + handle
+    }
+
+    var reportPlatform: ReportPlatform {
+        switch self {
+        case .tiktok: return .tiktok
+        case .facebook: return .facebook
+        case .instagram: return .instagram
         }
     }
 }
@@ -124,8 +148,12 @@ struct Account: Identifiable, Codable, Hashable {
     var fetchedVideos: Int
     var posts24h: Int
     var views24h: Int64
+    /// مجموع إعجابات المنشورات المنشورة خلال آخر ٢٤ ساعة.
+    var likes24h: Int64
     var posts7d: Int
     var weeklyViews: Int64
+    /// مجموع إعجابات المنشورات المنشورة خلال آخر ٧ أيام.
+    var likes7d: Int64
     var avgViews: Int64
     var coverage: Double
     var connected: Bool
@@ -153,12 +181,31 @@ struct Account: Identifiable, Codable, Hashable {
         avgViews > 0 ? avgViews : (fetchedVideos > 0 ? views / Int64(fetchedVideos) : 0)
     }
 
-    /// مفتاح مستقل لكل منصة حتى لا يتعارض حساب TikTok وFacebook بنفس الاسم.
+    /// مفتاح مستقل لكل منصة حتى لا يتعارض حساب TikTok وFacebook وInstagram بنفس الاسم.
     var videoCacheKey: String {
-        platform == .facebook ? "facebook:\(handle.lowercased())" : handle
+        switch platform {
+        case .tiktok: return handle.lowercased()
+        case .facebook: return "facebook:\(handle.lowercased())"
+        case .instagram: return "instagram:\(handle.lowercased())"
+        }
     }
 
     var isFacebook: Bool { platform == .facebook }
+
+    var isInstagram: Bool { platform == .instagram }
+
+    var isTikTok: Bool { platform == .tiktok }
+
+    /// فيسبوك يُعرض باسم الصفحة، وإنستغرام بروابط المشاركة يُعرض بنص مفهوم،
+    /// وبقية المنصات بعلامة @.
+    var handleLabel: String {
+        if isFacebook { return handle }
+        if isInstagram {
+            if handle.hasPrefix("share_") { return "رابط مشاركة إنستغرام" }
+            if handle.hasPrefix("p_") || handle.hasPrefix("reel_") { return "منشور إنستغرام" }
+        }
+        return "@" + handle
+    }
 
     /// مجموع مشاهدات المنشورات المحمّلة دقيق فقط إذا كانت كل المنشورات محمّلة
     /// وكانت مشاهداتها غير مقرّبة من TikTok.
@@ -222,7 +269,8 @@ struct Account: Identifiable, Codable, Hashable {
 
     enum CodingKeys: String, CodingKey {
         case id, platform, handle, url, displayName, avatarUrl, isVerified, followers, following
-        case likes, posts, views, videoLikes, comments, shares, fetchedVideos, posts24h, views24h, posts7d, weeklyViews
+        case likes, posts, views, videoLikes, comments, shares, fetchedVideos, posts24h, views24h
+        case likes24h, posts7d, weeklyViews, likes7d
         case avgViews, coverage, connected, publicStats, status, error, lastSyncedAt, createdAt
         case profileExact, viewsExact, dailyComplete, dailyViewsExact, weeklyComplete, weeklyViewsExact, allPostsLoaded
         case postsCountExact
@@ -233,7 +281,7 @@ struct Account: Identifiable, Codable, Hashable {
         id = c.flexString(.id, default: UUID().uuidString)
         platform = AccountPlatform(rawValue: c.flexString(.platform, default: "tiktok")) ?? .tiktok
         handle = c.flexString(.handle)
-        let fallbackURL = (platform == .facebook ? "https://www.facebook.com/" : "https://www.tiktok.com/@") + handle
+        let fallbackURL = platform.profileURLPrefix + handle
         url = c.flexString(.url, default: fallbackURL)
         displayName = c.flexString(.displayName, default: handle)
         avatarUrl = c.flexStringOrNil(.avatarUrl)
@@ -250,8 +298,10 @@ struct Account: Identifiable, Codable, Hashable {
         fetchedVideos = c.flexInt(.fetchedVideos)
         posts24h = c.flexInt(.posts24h)
         views24h = c.flexInt64(.views24h)
+        likes24h = c.flexInt64(.likes24h)
         posts7d = c.flexInt(.posts7d)
         weeklyViews = c.flexInt64(.weeklyViews)
+        likes7d = c.flexInt64(.likes7d)
         avgViews = c.flexInt64(.avgViews)
         coverage = c.flexDouble(.coverage)
         connected = c.flexBool(.connected)
@@ -275,8 +325,8 @@ struct Account: Identifiable, Codable, Hashable {
     init(id: String, platform: AccountPlatform = .tiktok, handle: String, displayName: String, url: String = "", avatarUrl: String? = nil,
          isVerified: Bool = false, followers: Int64 = 0, following: Int64 = 0, likes: Int64 = 0,
          posts: Int = 0, postsCountExact: Bool = true, views: Int64 = 0, videoLikes: Int64 = 0, comments: Int64 = 0, shares: Int64 = 0,
-         fetchedVideos: Int = 0, posts24h: Int = 0, views24h: Int64 = 0,
-         posts7d: Int = 0, weeklyViews: Int64 = 0,
+         fetchedVideos: Int = 0, posts24h: Int = 0, views24h: Int64 = 0, likes24h: Int64 = 0,
+         posts7d: Int = 0, weeklyViews: Int64 = 0, likes7d: Int64 = 0,
          avgViews: Int64 = 0, coverage: Double = 1, connected: Bool = true,
          publicStats: Bool = false, profileExact: Bool = true,
          viewsExact: Bool = true, dailyComplete: Bool = true, dailyViewsExact: Bool = true,
@@ -286,7 +336,7 @@ struct Account: Identifiable, Codable, Hashable {
         self.platform = platform
         self.handle = handle
         self.url = url.isEmpty
-            ? ((platform == .facebook ? "https://www.facebook.com/" : "https://www.tiktok.com/@") + handle)
+            ? (platform.profileURLPrefix + handle)
             : url
         self.displayName = displayName
         self.avatarUrl = avatarUrl
@@ -303,8 +353,10 @@ struct Account: Identifiable, Codable, Hashable {
         self.fetchedVideos = fetchedVideos
         self.posts24h = posts24h
         self.views24h = views24h
+        self.likes24h = likes24h
         self.posts7d = posts7d
         self.weeklyViews = weeklyViews
+        self.likes7d = likes7d
         self.avgViews = avgViews
         self.coverage = coverage
         self.connected = connected
@@ -390,8 +442,12 @@ struct Summary: Codable, Hashable {
     var shares: Int64
     var posts24h: Int
     var views24h: Int64
+    /// مجموع إعجابات المنشورات المنشورة خلال آخر ٢٤ ساعة.
+    var likes24h: Int64
     var posts7d: Int
     var weeklyViews: Int64
+    /// مجموع إعجابات المنشورات المنشورة خلال آخر ٧ أيام.
+    var likes7d: Int64
     var avgViews: Int64
     var loadedVideos: Int
     var profileExact: Bool
@@ -413,11 +469,11 @@ struct Summary: Codable, Hashable {
 
     static let empty = Summary(accounts: 0, connected: 0, posts: 0, views: 0, totalLikes: 0,
                                likes: 0, comments: 0, shares: 0, posts24h: 0, views24h: 0,
-                               avgViews: 0, lastSyncedAt: nil)
+                               likes24h: 0, avgViews: 0, lastSyncedAt: nil)
 
     enum CodingKeys: String, CodingKey {
-        case accounts, connected, posts, views, totalLikes, likes, comments, shares, posts24h, views24h
-        case posts7d, weeklyViews, avgViews, loadedVideos, profileExact, viewsExact, dailyComplete, dailyViewsExact
+        case accounts, connected, posts, views, totalLikes, likes, comments, shares, posts24h, views24h, likes24h
+        case posts7d, weeklyViews, likes7d, avgViews, loadedVideos, profileExact, viewsExact, dailyComplete, dailyViewsExact
         case weeklyComplete, weeklyViewsExact, allPostsLoaded, lastSyncedAt
     }
 
@@ -433,8 +489,10 @@ struct Summary: Codable, Hashable {
         shares = c.flexInt64(.shares)
         posts24h = c.flexInt(.posts24h)
         views24h = c.flexInt64(.views24h)
+        likes24h = c.flexInt64(.likes24h)
         posts7d = c.flexInt(.posts7d)
         weeklyViews = c.flexInt64(.weeklyViews)
+        likes7d = c.flexInt64(.likes7d)
         avgViews = c.flexInt64(.avgViews)
         loadedVideos = c.flexInt(.loadedVideos)
         profileExact = c.flexBool(.profileExact)
@@ -449,7 +507,8 @@ struct Summary: Codable, Hashable {
 
     init(accounts: Int, connected: Int, posts: Int, views: Int64, totalLikes: Int64 = 0,
          likes: Int64, comments: Int64, shares: Int64, posts24h: Int, views24h: Int64,
-         avgViews: Int64, lastSyncedAt: String?, posts7d: Int = 0, weeklyViews: Int64 = 0,
+         likes24h: Int64 = 0, avgViews: Int64, lastSyncedAt: String?, posts7d: Int = 0, weeklyViews: Int64 = 0,
+         likes7d: Int64 = 0,
          loadedVideos: Int = 0, profileExact: Bool = true, viewsExact: Bool = false, dailyComplete: Bool = true,
          dailyViewsExact: Bool = false, weeklyComplete: Bool = true,
          weeklyViewsExact: Bool = false, allPostsLoaded: Bool = false) {
@@ -463,8 +522,10 @@ struct Summary: Codable, Hashable {
         self.shares = shares
         self.posts24h = posts24h
         self.views24h = views24h
+        self.likes24h = likes24h
         self.posts7d = posts7d
         self.weeklyViews = weeklyViews
+        self.likes7d = likes7d
         self.avgViews = avgViews
         self.loadedVideos = loadedVideos
         self.profileExact = profileExact
@@ -486,8 +547,10 @@ struct Summary: Codable, Hashable {
         let shares = accounts.reduce(Int64(0)) { $0 + $1.shares }
         let posts24h = accounts.reduce(0) { $0 + $1.posts24h }
         let views24h = accounts.reduce(Int64(0)) { $0 + $1.views24h }
+        let likes24h = accounts.reduce(Int64(0)) { $0 + $1.likes24h }
         let posts7d = accounts.reduce(0) { $0 + $1.posts7d }
         let weeklyViews = accounts.reduce(Int64(0)) { $0 + $1.weeklyViews }
+        let likes7d = accounts.reduce(Int64(0)) { $0 + $1.likes7d }
         let loadedVideos = accounts.reduce(0) { $0 + $1.fetchedVideos }
         let synced = accounts.compactMap { $0.lastSyncedAt }.sorted().last
         return Summary(
@@ -501,10 +564,12 @@ struct Summary: Codable, Hashable {
             shares: shares,
             posts24h: posts24h,
             views24h: views24h,
+            likes24h: likes24h,
             avgViews: loadedVideos > 0 ? views / Int64(loadedVideos) : 0,
             lastSyncedAt: synced,
             posts7d: posts7d,
             weeklyViews: weeklyViews,
+            likes7d: likes7d,
             loadedVideos: loadedVideos,
             profileExact: accounts.allSatisfy { $0.profileExact },
             viewsExact: accounts.allSatisfy { $0.viewsExact },

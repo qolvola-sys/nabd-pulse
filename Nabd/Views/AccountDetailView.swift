@@ -16,7 +16,7 @@ struct AccountDetailView: View {
     private var current: Account { detail ?? account }
 
     private var handleText: String {
-        current.isFacebook ? current.handle : "@" + current.handle
+        current.handleLabel
     }
 
     private var dailyExact: Bool {
@@ -53,6 +53,15 @@ struct AccountDetailView: View {
             }
             return "≈ مشاهدات فيسبوك متاحة للفيديو فقط؛ المنشورات النصية والصور لا تكشف مشاهدات عامة."
         }
+        if current.isInstagram {
+            if current.weeklyComplete && current.weeklyViewsExact {
+                return "كل منشورات آخر ٧ أيام المتاحة علناً محمّلة، ومشاهدات الفيديو دقيقة 100%."
+            }
+            if !current.weeklyComplete {
+                return "≈ يُعرض للزائر نحو ١٢ منشوراً حديثاً؛ قد تكون هناك منشورات أقدم لم يعرضها إنستغرام."
+            }
+            return "≈ مشاهدات إنستغرام متاحة للفيديو والريل فقط؛ منشورات الصور لا تكشف مشاهدات عامة."
+        }
         if current.weeklyComplete && current.weeklyViewsExact {
             return "كل منشورات آخر ٧ أيام محمّلة، والنتيجة دقيقة 100% (١٬٠٠٠٬٠٠٠ مشاهدة = 100%)."
         }
@@ -79,6 +88,7 @@ struct AccountDetailView: View {
                 VStack(spacing: 18) {
                     profileHeader
                     last24hCard
+                    if current.isInstagram { instagramLikesCard }
                     weeklyCard
                     if !current.connected && !current.publicStats {
                         connectCard
@@ -109,7 +119,7 @@ struct AccountDetailView: View {
             }
             Button("إلغاء", role: .cancel) {}
         } message: {
-            Text("لن يتأثر \(current.isFacebook ? "حساب فيسبوك" : "حساب TikTok") نفسه.")
+            Text("لن يتأثر \(current.platform.accountNoun) \(current.platform.title) نفسه.")
         }
         .safeAreaInset(edge: .bottom) {
             bottomBar
@@ -254,11 +264,56 @@ struct AccountDetailView: View {
                  ? "كل منشورات آخر ٢٤ ساعة المتاحة محمّلة، والمشاهدات دقيقة 100%."
                  : (current.isFacebook
                     ? "≈ مشاهدات فيسبوك متاحة للفيديو فقط، وتُعرض أحدث ٢٠ منشوراً علنياً."
-                    : (current.dailyComplete
-                       ? "≈ مشاهدات الفيديو العامة يقرّبها TikTok."
-                       : (AppVariant.readsEveryWeeklyPost
-                          ? "بعض منشورات آخر ٢٤ ساعة لم تُقرأ بعد؛ تُعرض المنشورات المحمّلة."
-                          : "الحساب نشر أكثر من ١٠ منشورات في ٢٤ ساعة؛ تُعرض أحدث ١٠ فقط."))))
+                    : (current.isInstagram
+                       ? "≈ مشاهدات إنستغرام متاحة للفيديو والريل فقط، ويُعرض نحو ١٢ منشوراً حديثاً."
+                       : (current.dailyComplete
+                          ? "≈ مشاهدات الفيديو العامة يقرّبها TikTok."
+                          : (AppVariant.readsEveryWeeklyPost
+                             ? "بعض منشورات آخر ٢٤ ساعة لم تُقرأ بعد؛ تُعرض المنشورات المحمّلة."
+                             : "الحساب نشر أكثر من ١٠ منشورات في ٢٤ ساعة؛ تُعرض أحدث ١٠ فقط.")))))
+                .font(.system(size: 9.5))
+                .foregroundColor(Theme.textTertiary)
+                .lineSpacing(3)
+        }
+        .card(padding: 15)
+    }
+
+    /// إعجابات إنستغرام في بطاقة مستقلة عن المشاهدات.
+    private var instagramLikesCard: some View {
+        VStack(alignment: .leading, spacing: 13) {
+            HStack(spacing: 7) {
+                Image(systemName: "heart.fill")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundColor(Theme.pink)
+                Text("إعجابات إنستغرام")
+                    .font(.system(size: 12.5, weight: .bold))
+                    .foregroundColor(Theme.text)
+                Spacer()
+                Text("منفصلة")
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .foregroundColor(Theme.pink)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(Theme.pink.opacity(0.12)))
+            }
+
+            HStack(spacing: 0) {
+                detailMetric(
+                    value: Num.maybeApprox(current.likes24h, exact: current.dailyComplete),
+                    label: "إعجاب ٢٤س",
+                    icon: "heart.fill",
+                    tint: Theme.pink
+                )
+                Rectangle().fill(Theme.borderSoft).frame(width: 1, height: 34)
+                detailMetric(
+                    value: Num.maybeApprox(current.likes7d, exact: current.weeklyComplete),
+                    label: "إعجاب ٧ أيام",
+                    icon: "heart.circle.fill",
+                    tint: Theme.violet
+                )
+            }
+
+            Text("مجموع إعجابات المنشورات المنشورة خلال كل نافذة، محسوب من المنشورات العلنية المحمّلة.")
                 .font(.system(size: 9.5))
                 .foregroundColor(Theme.textTertiary)
                 .lineSpacing(3)
@@ -470,7 +525,9 @@ struct AccountDetailView: View {
                         Spacer()
                         Text(current.isFacebook
                              ? "آخر \(Num.full(Int64(current.fetchedVideos))) منشوراً متاحاً علناً"
-                             : "\(Num.full(Int64(current.fetchedVideos))) من \(Num.maybeApprox(Int64(current.posts), exact: current.postsCountExact)) منشوراً")
+                             : (current.isInstagram
+                                ? "آخر \(Num.full(Int64(current.fetchedVideos))) منشوراً متاحاً علناً"
+                                : "\(Num.full(Int64(current.fetchedVideos))) من \(Num.maybeApprox(Int64(current.posts), exact: current.postsCountExact)) منشوراً"))
                             .font(.system(size: 10.5, weight: .medium, design: .rounded))
                             .foregroundColor(Theme.textSecondary)
                     }
@@ -484,9 +541,13 @@ struct AccountDetailView: View {
                          ? (current.viewsExact
                             ? "مشاهدات الفيديو المحمّلة دقيقة 100%."
                             : "≈ مشاهدات فيسبوك متاحة للفيديو فقط — المنشورات النصية والصور بلا مشاهدات معروضة.")
-                         : (current.viewsExact
-                            ? "مشاهدات المنشورات المحمّلة دقيقة 100%."
-                            : "مشاهدات الفيديو العامة يقرّبها TikTok — تظهر بعلامة ≈."))
+                         : (current.isInstagram
+                            ? (current.viewsExact
+                               ? "مشاهدات الريل المحمّلة دقيقة 100%."
+                               : "≈ مشاهدات إنستغرام متاحة للفيديو والريل فقط — منشورات الصور بلا مشاهدات معروضة.")
+                            : (current.viewsExact
+                               ? "مشاهدات المنشورات المحمّلة دقيقة 100%."
+                               : "مشاهدات الفيديو العامة يقرّبها TikTok — تظهر بعلامة ≈.")))
                         .font(.system(size: 10))
                         .foregroundColor(current.viewsExact ? Theme.green.opacity(0.9) : Theme.gold.opacity(0.9))
                     Text("آخر مزامنة: \(Dates.relative(current.lastSyncedAt))")

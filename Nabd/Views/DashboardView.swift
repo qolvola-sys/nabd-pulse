@@ -20,20 +20,24 @@ struct DashboardView: View {
     }
 
     private var platformsLabel: String {
-        if hasTikTokAccounts && hasFacebookAccounts { return "TikTok + فيسبوك" }
-        if hasFacebookAccounts { return "فيسبوك" }
-        return "TikTok"
+        let names = AccountPlatform.allCases
+            .filter { platform in store.accounts.contains { $0.platform == platform } }
+            .map(\.title)
+        return names.isEmpty ? "TikTok" : names.joined(separator: " + ")
+    }
+
+    private var hasInstagramAccounts: Bool {
+        store.accounts.contains { $0.platform == .instagram }
     }
 
     /// جملة الدقة حسب المنصات الموجودة في المساحة.
     private var accuracySentence: String {
-        if hasTikTokAccounts && hasFacebookAccounts {
-            return "مشاهدات TikTok مقرّبة، ومشاهدات فيسبوك متاحة للفيديو فقط."
-        }
-        if hasFacebookAccounts {
-            return "مشاهدات فيسبوك متاحة للفيديو فقط."
-        }
-        return "مشاهدات الفيديو العامة يقرّبها TikTok."
+        var parts: [String] = []
+        if hasTikTokAccounts { parts.append("مشاهدات TikTok مقرّبة") }
+        if hasFacebookAccounts { parts.append("مشاهدات فيسبوك متاحة للفيديو فقط") }
+        if hasInstagramAccounts { parts.append("مشاهدات إنستغرام متاحة للفيديو والريل فقط") }
+        guard !parts.isEmpty else { return "مشاهدات الفيديو العامة يقرّبها TikTok." }
+        return parts.joined(separator: "، ") + "."
     }
 
     private var viewsAccuracyNote: String {
@@ -498,7 +502,7 @@ struct DashboardView: View {
                                             .font(.system(size: 7.5, weight: .bold))
                                             .foregroundColor(account.isFacebook ? Theme.cyan : Theme.pink)
                                     }
-                                    Text(account.isFacebook ? account.handle : "@" + account.handle)
+                                    Text(account.handleLabel)
                                         .font(.system(size: 9.5))
                                         .foregroundColor(Theme.textTertiary)
                                         .lineLimit(1)
@@ -964,7 +968,7 @@ struct DashboardView: View {
                 Image(systemName: "calendar.badge.clock")
                     .font(.system(size: 9.5, weight: .semibold))
                     .foregroundColor(Theme.violet)
-                Text("المشاهدات هي مجموع مشاهدات المنشورات المنشورة خلال آخر ٧ أيام. الأرقام التي تظهر بدون ≈ دقيقة 100%، والحسابات التي لم تُقرأ كل منشوراتها تظهر بعلامة تقريب." + (hasFacebookAccounts ? " مشاهدات فيسبوك متاحة للفيديو فقط." : ""))
+                Text("المشاهدات هي مجموع مشاهدات المنشورات المنشورة خلال آخر ٧ أيام. الأرقام التي تظهر بدون ≈ دقيقة 100%، والحسابات التي لم تُقرأ كل منشوراتها تظهر بعلامة تقريب." + (hasFacebookAccounts ? " مشاهدات فيسبوك متاحة للفيديو فقط." : "") + (hasInstagramAccounts ? " مشاهدات إنستغرام متاحة للفيديو والريل فقط، وإعجاباتها في بطاقة منفصلة." : ""))
                     .font(.system(size: 9.5))
                     .foregroundColor(Theme.textTertiary)
                     .lineSpacing(3)
@@ -1069,7 +1073,7 @@ struct DashboardView: View {
             if store.summary.accounts > 0 {
                 Text(AppVariant.readsEveryWeeklyPost
                      ? "التقييم الأسبوعي في «المتابعة» يُحسب من كل منشورات آخر ٧ أيام لكل حساب. الأرقام التي تظهر بدون ≈ دقيقة 100%: كل ١٠٬٠٠٠ مشاهدة = نقطة، و١٬٠٠٠٬٠٠٠ = 100%. " + accuracySentence
-                     : "بيانات TikTok التي تظهر بدون ≈ دقيقة 100%. " + accuracySentence + " التقييم من 100: كل ١٠٬٠٠٠ مشاهدة = نقطة، و١٬٠٠٠٬٠٠٠ = 100%.")
+                     : "البيانات المباشرة التي تظهر بدون ≈ دقيقة 100%. " + accuracySentence + " التقييم من 100: كل ١٠٬٠٠٠ مشاهدة = نقطة، و١٬٠٠٠٬٠٠٠ = 100%.")
                     .font(.system(size: 9.5))
                     .foregroundColor(Theme.textTertiary)
                     .multilineTextAlignment(.center)

@@ -252,7 +252,7 @@ struct ReportSettingsView: View {
         VStack(alignment: .leading, spacing: 13) {
             SectionHeader(
                 title: "صفحات إضافية",
-                subtitle: "فيسبوك أو أي منصة أخرى — تُضاف كقالب إلى كل تقرير جديد"
+                subtitle: "فيسبوك أو أي منصة أخرى — تُضاف كقالب إلى تقرير منصتها فقط"
             )
 
             if activeSpaceID == nil {
@@ -266,7 +266,7 @@ struct ReportSettingsView: View {
                     Image(systemName: "rectangle.and.pencil.and.ellipsis")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(Theme.textTertiary)
-                    Text("لا توجد صفحات يدوية بعد. أضف صفحات فيسبوك أو أي منصة أخرى، وستظهر تلقائياً في كل تقرير جديد لهذه المساحة.")
+                    Text("لا توجد صفحات يدوية بعد. أضف صفحات فيسبوك أو أي منصة أخرى، وستظهر تلقائياً في تقرير منصتها لهذه المساحة.")
                         .font(.system(size: 10.5))
                         .foregroundColor(Theme.textSecondary)
                         .lineSpacing(3)

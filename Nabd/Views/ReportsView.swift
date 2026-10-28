@@ -9,6 +9,7 @@ struct ReportsView: View {
     @EnvironmentObject private var reports: ReportsManager
 
     @State private var selectedKind: ReportKind = .daily
+    @State private var selectedPlatform: ReportPlatform = .tiktok
     @State private var filter: ReportFilter = .all
     @State private var editingDocument: ReportDocument?
     @State private var shareFile: ShareFile?
@@ -42,6 +43,10 @@ struct ReportsView: View {
         }
         .onAppear {
             reports.refreshExportedFiles()
+            if !availablePlatforms.contains(selectedPlatform),
+               let first = availablePlatforms.first {
+                selectedPlatform = first
+            }
         }
         .sheet(item: $editingDocument) { document in
             ReportEditorView(document: document)
@@ -167,19 +172,55 @@ struct ReportsView: View {
 
     private var manualPagesCount: Int {
         guard let spaceID = store.activeSpace?.id else { return 0 }
-        return reports.settings.manualRowsBySpace[spaceID]?.count ?? 0
+        return (reports.settings.manualRowsBySpace[spaceID] ?? [])
+            .filter { $0.platform == selectedPlatform }
+            .count
+    }
+
+    /// المنصات المتاحة في المساحة النشطة، بترتيب ثابت.
+    private var availablePlatforms: [ReportPlatform] {
+        let present = Set(store.accounts.map { $0.platform.reportPlatform })
+        return [.tiktok, .facebook, .instagram].filter { present.contains($0) }
+    }
+
+    private var platformAccounts: [Account] {
+        store.accounts.filter { $0.platform.reportPlatform == selectedPlatform }
+    }
+
+    private var platformTint: Color {
+        tint(for: selectedPlatform)
+    }
+
+    private func tint(for platform: ReportPlatform) -> Color {
+        switch platform {
+        case .tiktok: return Theme.cyan
+        case .facebook: return Theme.violet
+        case .instagram: return Theme.pink
+        default: return Theme.textSecondary
+        }
     }
 
     private var canGenerate: Bool {
-        store.isDirect && !store.accounts.isEmpty && !reports.isGenerating
+        store.isDirect && !platformAccounts.isEmpty && !reports.isGenerating
     }
 
     private var generationCard: some View {
         VStack(alignment: .leading, spacing: 14) {
             SectionHeader(
                 title: "إنشاء تقرير",
-                subtitle: "الأرقام تُقرأ من صفحة كل حساب مباشرة، ويُعلَّم أي نقص بدل تقديمه كرقم نهائي."
+                subtitle: "اختر المنصة أولاً؛ كل منصة تُولّد ملفاً مستقلاً بأرقام صفحتها وحدها."
             )
+
+            VStack(alignment: .leading, spacing: 7) {
+                Text("المنصة")
+                    .font(.system(size: 10.5, weight: .bold))
+                    .foregroundColor(Theme.textTertiary)
+                HStack(spacing: 8) {
+                    ForEach(availablePlatforms) { platform in
+                        platformChip(platform)
+                    }
+                }
+            }
 
             HStack(spacing: 8) {
                 ForEach(ReportKind.allCases) { kind in
@@ -216,7 +257,7 @@ struct ReportsView: View {
                 .foregroundColor(Theme.textTertiary)
 
                 HStack(spacing: 7) {
-                    metaPill(icon: "person.2.fill", text: "\(Num.full(Int64(store.accounts.count))) حساب")
+                    metaPill(icon: selectedPlatform.icon, text: "\(Num.full(Int64(platformAccounts.count))) \(selectedPlatform.defaultProgram)")
                     metaPill(icon: "square.stack.3d.up.fill", text: "\(Num.full(Int64(store.activeSpace?.groups.count ?? 0))) مجموعة")
                     if manualPagesCount > 0 {
                         metaPill(icon: "rectangle.and.pencil.and.ellipsis", text: "\(Num.full(Int64(manualPagesCount))) صفحة يدوية")
@@ -227,10 +268,12 @@ struct ReportsView: View {
             .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Theme.bgSoft))
             .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Theme.borderSoft, lineWidth: 1))
 
-            if !store.isDirect {
-                sourceWarning("توليد التقارير يعمل مع مصدر «TikTok مباشرة». أوقف الوضع التجريبي أو الخادم من الإعدادات أولاً.")
-            } else if store.accounts.isEmpty {
-                sourceWarning("لا توجد حسابات في المساحة النشطة. أضف حساباً واحداً على الأقل ثم أعد المحاولة.")
+            if availablePlatforms.isEmpty {
+                sourceWarning("لا توجد حسابات في المساحة النشطة. أضف حساب TikTok أو فيسبوك أو إنستغرام ثم أعد المحاولة.")
+            } else if !store.isDirect {
+                sourceWarning("توليد التقارير يعمل في الوضع المباشر. أوقف الوضع التجريبي أو الخادم من الإعدادات أولاً.")
+            } else if platformAccounts.isEmpty {
+                sourceWarning("لا توجد حسابات \(selectedPlatform.defaultProgram) في المساحة النشطة. اختر منصة أخرى أو أضف حساباً.")
             }
 
             Button {
@@ -243,7 +286,9 @@ struct ReportsView: View {
                         Image(systemName: "doc.badge.plus")
                             .font(.system(size: 15, weight: .bold))
                     }
-                    Text(reports.isGenerating ? "جارٍ قراءة الحسابات…" : "توليد \(selectedKind.title)")
+                    Text(reports.isGenerating
+                         ? "جارٍ قراءة حسابات \(selectedPlatform.defaultProgram)…"
+                         : "توليد \(selectedKind.title) · \(selectedPlatform.title)")
                 }
             }
             .buttonStyle(GradientButtonStyle())
@@ -251,6 +296,44 @@ struct ReportsView: View {
             .opacity(canGenerate ? 1 : 0.45)
         }
         .card(padding: 16)
+    }
+
+    private func platformChip(_ platform: ReportPlatform) -> some View {
+        let accent = tint(for: platform)
+        let selected = selectedPlatform == platform
+        let count = store.accounts.filter { $0.platform.reportPlatform == platform }.count
+        return Button {
+            guard !reports.isGenerating else { return }
+            withAnimation(.spring(response: 0.32, dampingFraction: 0.85)) {
+                selectedPlatform = platform
+            }
+            store.haptic(.selection)
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: platform.icon)
+                    .font(.system(size: 10, weight: .bold))
+                Text(platform.title)
+                    .font(.system(size: 12, weight: .bold))
+                Text(Num.full(Int64(count)))
+                    .font(.system(size: 8.5, weight: .bold, design: .rounded))
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .background(Capsule().fill((selected ? Color(hex: 0x061016) : accent).opacity(0.14)))
+            }
+            .foregroundColor(selected ? Color(hex: 0x061016) : Theme.textSecondary)
+            .padding(.horizontal, 12)
+            .frame(height: 38)
+            .frame(maxWidth: .infinity)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(selected ? accent : Theme.surface)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(selected ? .clear : Theme.borderSoft, lineWidth: 1)
+            )
+        }
+        .buttonStyle(PressableStyle(scale: 0.98))
     }
 
     private func kindChip(_ kind: ReportKind) -> some View {
@@ -400,6 +483,7 @@ struct ReportsView: View {
 
     private var filteredReports: [ReportDocument] {
         reports.documents.filter { document in
+            guard document.reportPlatform == selectedPlatform else { return false }
             switch filter {
             case .all: return true
             case .daily: return document.kind == .daily
@@ -411,8 +495,8 @@ struct ReportsView: View {
     private var reportsSection: some View {
         VStack(alignment: .leading, spacing: 13) {
             SectionHeader(
-                title: "سجل التقارير",
-                subtitle: "\(Num.full(Int64(reports.documents.count))) تقرير محفوظ · اضغط أي تقرير للتعديل"
+                title: "سجل تقارير \(selectedPlatform.title)",
+                subtitle: "\(Num.full(Int64(filteredReports.count))) تقرير محفوظ لهذه المنصة · اضغط أي تقرير للتعديل"
             )
 
             HStack(spacing: 7) {
@@ -425,7 +509,7 @@ struct ReportsView: View {
                 EmptyStateView(
                     icon: "doc.text.magnifyingglass",
                     title: "لا توجد تقارير بعد",
-                    message: "أنشئ تقريراً يومياً أو أسبوعياً ليظهر هنا، ثم عدّله أو أرسله."
+                    message: "أنشئ تقرير \(selectedKind.title) لـ\(selectedPlatform.defaultProgram) أولاً ليظهر هنا، ثم عدّله أو أرسله."
                 )
                 .card(padding: 4)
             } else {
@@ -480,6 +564,8 @@ struct ReportsView: View {
                             .padding(.horizontal, 6)
                             .padding(.vertical, 3)
                             .background(Capsule().fill(Theme.surfaceRaised))
+
+                        Chip(text: document.reportPlatform.title, color: tint(for: document.reportPlatform))
 
                         Spacer(minLength: 4)
 
@@ -575,21 +661,25 @@ struct ReportsView: View {
 
     // MARK: - ملفات Excel
 
+    private var displayedFiles: [ReportFile] {
+        reports.exportedFiles.filter { $0.platform == selectedPlatform }
+    }
+
     private var filesSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             SectionHeader(
-                title: "ملفات Excel",
+                title: "ملفات Excel · \(selectedPlatform.title)",
                 subtitle: "نسخة محفوظة في مجلد التطبيق، ويمكن إرسالها في أي وقت",
                 actionTitle: reports.exportedFiles.isEmpty ? nil : "تحديث",
                 action: { reports.refreshExportedFiles() }
             )
 
-            if reports.exportedFiles.isEmpty {
+            if displayedFiles.isEmpty {
                 HStack(spacing: 9) {
                     Image(systemName: "folder")
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundColor(Theme.textTertiary)
-                    Text("لم تُصدَّر ملفات بعد. افتح تقريراً واضغط «تصدير ومشاركة».")
+                    Text("لم تُصدَّر ملفات \(selectedPlatform.defaultProgram) بعد. افتح تقريراً واضغط «تصدير ومشاركة».")
                         .font(.system(size: 10.5))
                         .foregroundColor(Theme.textSecondary)
                     Spacer(minLength: 0)
@@ -597,7 +687,7 @@ struct ReportsView: View {
                 .padding(12)
                 .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Theme.bgSoft))
             } else {
-                ForEach(reports.exportedFiles) { file in
+                ForEach(displayedFiles) { file in
                     fileRow(file)
                 }
             }
@@ -683,7 +773,7 @@ struct ReportsView: View {
                 Image(systemName: "checkmark.seal.fill")
                     .font(.system(size: 11, weight: .bold))
                     .foregroundColor(Theme.green)
-                Text("تُقرأ حسابات TikTok من statsV2 وصفحات فيسبوك من صفحاتها العامة وقت التوليد. أي قراءة ناقصة أو مقرّبة تظهر بعلامة واضحة ولا تُقدَّم كرقم دقيق.")
+                Text("تُقرأ حسابات TikTok من statsV2، وصفحات فيسبوك من صفحاتها العامة، وحسابات إنستغرام من واجهتها العامة وقت التوليد. أي قراءة ناقصة أو مقرّبة تظهر بعلامة واضحة ولا تُقدَّم كرقم دقيق.")
                     .font(.system(size: 9.5))
                     .foregroundColor(Theme.textTertiary)
                     .lineSpacing(3)
@@ -707,7 +797,11 @@ struct ReportsView: View {
     private func generate(_ kind: ReportKind) async {
         guard canGenerate else { return }
         store.haptic(.impact)
-        let document = await reports.generate(kind: kind, store: store)
+        let document = await reports.generate(
+            kind: kind,
+            platform: selectedPlatform,
+            store: store
+        )
         if let document {
             store.haptic(.success)
             editingDocument = document

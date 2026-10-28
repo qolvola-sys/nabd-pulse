@@ -55,6 +55,7 @@ struct RootView: View {
     @State private var tab: AppTab
     @State private var showWhatsNew = false
     @State private var showFacebookFromWhatsNew = false
+    @State private var showInstagramFromWhatsNew = false
     #if MUTABAA
     private let scheduleTimer = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
     #endif
@@ -135,17 +136,24 @@ struct RootView: View {
             runReportsCheck()
         }
         .alert("جديد في \(AppVariant.version)", isPresented: $showWhatsNew) {
-            Button("فتح فيسبوك") {
-                showFacebookFromWhatsNew = true
+            Button("فتح إنستغرام") {
+                showInstagramFromWhatsNew = true
             }
             Button("حسناً", role: .cancel) {}
         } message: {
-            Text("تم تثبيت هذه النسخة بنجاح.\n\n• إضافة صفحات فيسبوك أصبحت تفهم روابط الصفحات والمشاركة المختصرة وfb.me والروابط العربية، وتعرض سبباً واضحاً إن كان الرابط غير مدعوم.\n• زر «فيسبوك» ظاهر دائماً أعلى الشاشة، وبطاقة «صفحات فيسبوك» في الإعدادات والحسابات.\n• التقارير الجديدة بسبعة أعمدة فقط: بدون عمود «العدد المطلوب».\n\nملاحظة: ملفات Excel القديمة تحتفظ بتنسيقها؛ أنشئ تقريراً جديداً بعد التحديث.")
+            Text("تم تثبيت هذه النسخة بنجاح.\n\n• إنستغرام أصبح منصة كاملة: زر أعلى الشاشة، وبطاقة في الإعدادات والحسابات.\n• بطاقة منفصلة لمشاهدات وإعجابات إنستغرام اليومية والأسبوعية.\n• تقارير مستقلة لكل منصة: تقرير TikTok وتقرير فيسبوك وتقرير إنستغرام، لكل منها سجل وملفات Excel باسم منصتها.\n• إصلاح روابط فيسبوك: الصفحات وprofile.php و/p/ و/share/ وfb.me والروابط العربية وMessenger.\n\nملاحظة: ملفات Excel القديمة تحتفظ بتنسيقها؛ أنشئ تقريراً جديداً بعد التحديث.")
         }
         .fullScreenCover(isPresented: $showFacebookFromWhatsNew) {
             ZStack {
                 AppBackground()
                 AccountsView(platform: .facebook)
+                    .environmentObject(store)
+            }
+        }
+        .fullScreenCover(isPresented: $showInstagramFromWhatsNew) {
+            ZStack {
+                AppBackground()
+                AccountsView(platform: .instagram)
                     .environmentObject(store)
             }
         }

@@ -373,6 +373,8 @@ enum FacebookPageParser {
         let totalLikes = posts.reduce(Int64(0)) { $0 + $1.likes }
         let totalComments = posts.reduce(Int64(0)) { $0 + $1.comments }
         let totalShares = posts.reduce(Int64(0)) { $0 + $1.shares }
+        let likes24h = recent.reduce(Int64(0)) { $0 + $1.likes }
+        let likes7d = weekly.reduce(Int64(0)) { $0 + $1.likes }
         let videoPosts = posts.filter { $0.viewsExact || $0.views > 0 }
 
         // خلاصة الصفحة العامة تعرض ٢٠ منشوراً. إن كانت أقل فهي كل المنشورات
@@ -408,8 +410,10 @@ enum FacebookPageParser {
             fetchedVideos: posts.count,
             posts24h: recent.count,
             views24h: recentViews,
+            likes24h: likes24h,
             posts7d: weekly.count,
             weeklyViews: weeklyViews,
+            likes7d: likes7d,
             avgViews: videoPosts.isEmpty ? 0 : totalViews / Int64(videoPosts.count),
             coverage: coverage,
             connected: false,

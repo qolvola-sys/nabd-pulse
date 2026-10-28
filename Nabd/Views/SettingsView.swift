@@ -11,6 +11,7 @@ struct SettingsView: View {
     @State private var shareFile: ShareFile?
     @State private var showSpaces = false
     @State private var showFacebook = false
+    @State private var showInstagram = false
     @State private var didLoad = false
 
     var body: some View {
@@ -19,6 +20,7 @@ struct SettingsView: View {
                 header
                 #if MUTABAA
                 facebookCard
+                instagramCard
                 if store.spacesEnabled {
                     spacesCard
                 }
@@ -59,6 +61,13 @@ struct SettingsView: View {
             ZStack {
                 AppBackground()
                 AccountsView(platform: .facebook)
+                    .environmentObject(store)
+            }
+        }
+        .fullScreenCover(isPresented: $showInstagram) {
+            ZStack {
+                AppBackground()
+                AccountsView(platform: .instagram)
                     .environmentObject(store)
             }
         }
@@ -156,6 +165,77 @@ struct SettingsView: View {
             .accessibilityIdentifier("settings-open-facebook")
 
             Text("تُقرأ الصفحات العامة دون تسجيل دخول: الاسم والمتابعون والمنشورات، ومشاهدات الفيديو المتاحة علناً. المنشورات النصية والصور لا تكشف مشاهدات.")
+                .font(.system(size: 10))
+                .foregroundColor(Theme.textTertiary)
+                .lineSpacing(3)
+        }
+        .card(padding: 16)
+    }
+
+    // MARK: - إنستغرام
+
+    private var instagramCount: Int {
+        store.accounts.filter { $0.platform == .instagram }.count
+    }
+
+    private var instagramCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Label("حسابات إنستغرام", systemImage: "camera.fill")
+                    .font(.system(size: 12.5, weight: .bold))
+                    .foregroundColor(Theme.text)
+                Spacer()
+                Chip(text: "\(instagramCount) حساب", color: Theme.pink)
+            }
+
+            Button {
+                store.haptic(.selection)
+                showInstagram = true
+            } label: {
+                HStack(spacing: 11) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(Theme.pink.opacity(0.13))
+                        Image(systemName: "camera.fill")
+                            .font(.system(size: 17, weight: .bold))
+                            .foregroundColor(Theme.pink)
+                    }
+                    .frame(width: 40, height: 40)
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("إضافة حسابات ومشاهدات وإعجابات")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(Theme.text)
+                        Text(store.isDirect
+                             ? "افتح صفحة إنستغرام لإضافة الحسابات وقراءة الإحصاءات."
+                             : "يعمل في الوضع المباشر — افتح الصفحة للتبديل بضغطة واحدة.")
+                            .font(.system(size: 10))
+                            .foregroundColor(store.isDirect ? Theme.textSecondary : Theme.gold)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                    }
+
+                    Spacer(minLength: 6)
+
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(Theme.textTertiary)
+                }
+                .padding(11)
+                .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Theme.bgSoft))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .strokeBorder(
+                            store.isDirect ? Theme.pink.opacity(0.24) : Theme.gold.opacity(0.28),
+                            lineWidth: 1
+                        )
+                )
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(PressableStyle(scale: 0.99))
+            .accessibilityIdentifier("settings-open-instagram")
+
+            Text("تُقرأ الحسابات العامة دون تسجيل دخول: الاسم والمتابعون وأحدث المنشورات، مع مشاهدات وإعجابات ٢٤ ساعة و٧ أيام في بطاقة منفصلة. منشورات الصور لا تكشف مشاهدات.")
                 .font(.system(size: 10))
                 .foregroundColor(Theme.textTertiary)
                 .lineSpacing(3)

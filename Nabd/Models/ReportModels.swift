@@ -84,6 +84,17 @@ enum ReportPlatform: String, Codable, CaseIterable, Identifiable {
         case .other: return "globe"
         }
     }
+
+    /// اسم المنصة داخل اسم ملف Excel.
+    var fileNameComponent: String {
+        switch self {
+        case .tiktok: return "TikTok"
+        case .facebook: return "Facebook"
+        case .instagram: return "Instagram"
+        case .youtube: return "YouTube"
+        case .other: return "Other"
+        }
+    }
 }
 
 // MARK: - جودة الأرقام
@@ -273,6 +284,8 @@ struct ReportPost: Identifiable, Codable, Hashable {
 struct ReportDocument: Identifiable, Codable, Hashable {
     var id: String
     var kind: ReportKind
+    /// منصة التقرير. اختياري للتوافق مع التقارير القديمة التي كانت تخلط المنصات.
+    var platform: ReportPlatform?
     var spaceID: String
     var spaceName: String
     var title: String
@@ -288,6 +301,7 @@ struct ReportDocument: Identifiable, Codable, Hashable {
     init(
         id: String = UUID().uuidString,
         kind: ReportKind,
+        platform: ReportPlatform? = nil,
         spaceID: String,
         spaceName: String,
         title: String = "منصات الأصفر",
@@ -302,6 +316,7 @@ struct ReportDocument: Identifiable, Codable, Hashable {
     ) {
         self.id = id
         self.kind = kind
+        self.platform = platform
         self.spaceID = spaceID
         self.spaceName = spaceName
         self.title = title
@@ -313,6 +328,11 @@ struct ReportDocument: Identifiable, Codable, Hashable {
         self.posts = posts
         self.note = note
         self.version = version
+    }
+
+    /// المنصة الفعلية: تقارير قديمة بلا منصة تُعامل كتقرير TikTok.
+    var reportPlatform: ReportPlatform {
+        platform ?? .tiktok
     }
 
     var rows: [ReportRow] {
@@ -381,7 +401,7 @@ struct ReportDocument: Identifiable, Codable, Hashable {
     }
 
     var displayTitle: String {
-        "\(kind.title) · \(displayDate)"
+        "\(kind.title) · \(reportPlatform.title) · \(displayDate)"
     }
 
     var dayKey: String {
@@ -389,7 +409,7 @@ struct ReportDocument: Identifiable, Codable, Hashable {
     }
 
     var fileBaseName: String {
-        "Mutabaa-\(kind.fileNameComponent)-\(dayKey)"
+        "Mutabaa-\(reportPlatform.fileNameComponent)-\(kind.fileNameComponent)-\(dayKey)"
     }
 
     var isEdited: Bool {
@@ -470,6 +490,7 @@ struct ReportSettings: Codable, Equatable {
 
 struct ReportFile: Identifiable, Hashable {
     let url: URL
+    let platform: ReportPlatform
     let kind: ReportKind
     let createdAt: Date
     let size: Int64
@@ -478,7 +499,7 @@ struct ReportFile: Identifiable, Hashable {
     var id: String { url.path }
 
     var displayTitle: String {
-        "\(kind.title) · \(ReportDates.displayDate(fromDayKey: dayKey) ?? dayKey)"
+        "\(kind.title) · \(platform.title) · \(ReportDates.displayDate(fromDayKey: dayKey) ?? dayKey)"
     }
 
     var displayDate: String {

@@ -458,6 +458,9 @@ struct ReportExcelBuilder {
         if document.rows.contains(where: { $0.platform == .facebook }) {
             parts.append("مشاهدات فيسبوك المتاحة علناً هي مشاهدات الفيديو فقط؛ المنشورات النصية والصور لا تكشف مشاهدات عامة.")
         }
+        if document.rows.contains(where: { $0.platform == .instagram }) {
+            parts.append("مشاهدات إنستغرام المتاحة علناً هي مشاهدات الفيديو والريل فقط؛ منشورات الصور لا تكشف مشاهدات عامة.")
+        }
         return parts.joined(separator: " ")
     }
 }

@@ -91,9 +91,14 @@ final class ReportsManager: ObservableObject {
         documents.first { $0.id == id }
     }
 
-    func filteredDocuments(kind: ReportKind? = nil, spaceID: String? = nil) -> [ReportDocument] {
+    func filteredDocuments(
+        kind: ReportKind? = nil,
+        platform: ReportPlatform? = nil,
+        spaceID: String? = nil
+    ) -> [ReportDocument] {
         documents.filter { document in
             (kind == nil || document.kind == kind) &&
+            (platform == nil || document.reportPlatform == platform) &&
             (spaceID == nil || document.spaceID == spaceID)
         }
     }
@@ -131,9 +136,10 @@ final class ReportsManager: ObservableObject {
 
     private func rememberManualRows(in document: ReportDocument) {
         // الصفحات المرتبطة بحساب لا تصبح قوالب حتى لو عُدّلت أرقامها يدوياً؛
-        // القالب مخصص للصفحات المضافة مستقلة (فيسبوك وغيرها).
+        // القالب مخصص للصفحات المضافة مستقلة. نحفظ قوالب المنصة نفسها فقط.
+        let platform = document.reportPlatform
         let templates = document.rows
-            .filter { $0.isManual && $0.accountID == nil }
+            .filter { $0.isManual && $0.accountID == nil && $0.platform == platform }
             .map {
                 ReportManualTemplate(
                     id: $0.id,
@@ -145,10 +151,13 @@ final class ReportsManager: ObservableObject {
                 )
             }
         updateSettings { settings in
-            if templates.isEmpty {
+            var stored = settings.manualRowsBySpace[document.spaceID] ?? []
+            stored.removeAll { $0.platform == platform }
+            stored.append(contentsOf: templates)
+            if stored.isEmpty {
                 settings.manualRowsBySpace.removeValue(forKey: document.spaceID)
             } else {
-                settings.manualRowsBySpace[document.spaceID] = templates
+                settings.manualRowsBySpace[document.spaceID] = stored
             }
         }
     }
@@ -162,13 +171,18 @@ final class ReportsManager: ObservableObject {
     /// يولّد تقريراً جديداً من الصفحات الحالية في المساحة النشطة.
     /// الأرقام تُقرأ من `WeeklyWebScanner` الذي يعترض `statsV2` من TikTok،
     /// وأي قراءة ناقصة تُعلَّم بوضوح بدل تقديمها كرقم دقيق.
-    func generate(kind: ReportKind, store: AppStore, now: Date = Date()) async -> ReportDocument? {
+    func generate(
+        kind: ReportKind,
+        platform: ReportPlatform,
+        store: AppStore,
+        now: Date = Date()
+    ) async -> ReportDocument? {
         guard !isGenerating else {
             lastError = "هناك تقرير قيد التوليد الآن."
             return nil
         }
         guard store.isDirect else {
-            lastError = "التقارير تقرأ الصفحات مباشرة. أوقف الوضع التجريبي واستخدم مصدر «TikTok مباشرة» أولاً."
+            lastError = "التقارير تقرأ الصفحات مباشرة. أوقف الوضع التجريبي واستخدم الوضع المباشر أولاً."
             return nil
         }
         guard !store.accounts.isEmpty else {
@@ -181,7 +195,11 @@ final class ReportsManager: ObservableObject {
         }
 
         let window = window(for: kind, now: now)
-        let accounts = store.accounts
+        let accounts = store.accounts.filter { $0.platform.reportPlatform == platform }
+        guard !accounts.isEmpty else {
+            lastError = "لا توجد حسابات \(platform.defaultProgram) في المساحة النشطة. أضف حساباً أولاً."
+            return nil
+        }
         let groups = store.groups
         let membership = space.groupMembership
 
@@ -230,18 +248,25 @@ final class ReportsManager: ObservableObject {
                     kind: kind,
                     current: completed - 1,
                     total: accounts.count,
-                    handle: account.platform == .facebook ? account.handle : "@\(account.handle)",
+                    handle: account.handleLabel,
                     phase: "قراءة منشورات \(account.displayName)"
                 )
 
                 let parsed: ParsedAccount
-                if account.platform == .facebook {
+                switch account.platform {
+                case .facebook:
                     parsed = await parseFacebook(
                         account: account,
                         startUnix: startUnix,
                         endUnix: endUnix
                     )
-                } else {
+                case .instagram:
+                    parsed = await parseInstagram(
+                        account: account,
+                        startUnix: startUnix,
+                        endUnix: endUnix
+                    )
+                case .tiktok:
                     let payload = await WeeklyWebScanner.shared.scan(
                         handle: account.handle,
                         cutoff: startUnix
@@ -260,7 +285,7 @@ final class ReportsManager: ObservableObject {
                     kind: kind,
                     current: completed,
                     total: accounts.count,
-                    handle: account.platform == .facebook ? account.handle : "@\(account.handle)",
+                    handle: account.handleLabel,
                     phase: "تمت قراءة \(completed) من \(accounts.count)"
                 )
             }
@@ -270,8 +295,9 @@ final class ReportsManager: ObservableObject {
             }
         }
 
-        // الصفحات اليدوية (مثل فيسبوك) تُحفظ من التقرير السابق وتُضاف كمجموعة مستقلة.
-        let manualTemplates = settings.manualRowsBySpace[space.id] ?? []
+        // الصفحات اليدوية تُحفظ من تقرير المنصة نفسها وتُضاف كمجموعة مستقلة.
+        let manualTemplates = (settings.manualRowsBySpace[space.id] ?? [])
+            .filter { $0.platform == platform }
         if !manualTemplates.isEmpty {
             let manualRows = manualTemplates.map { template in
                 ReportRow(
@@ -288,7 +314,7 @@ final class ReportsManager: ObservableObject {
                 )
             }
             reportGroups.append(
-                ReportGroup(name: "صفحات إضافية (إدخال يدوي)", rows: manualRows)
+                ReportGroup(name: "حسابات إضافية (إدخال يدوي)", rows: manualRows)
             )
         }
 
@@ -297,6 +323,7 @@ final class ReportsManager: ObservableObject {
         let title = "منصات \(space.name)"
         let document = ReportDocument(
             kind: kind,
+            platform: platform,
             spaceID: space.id,
             spaceName: space.name,
             title: title,
@@ -335,17 +362,24 @@ final class ReportsManager: ObservableObject {
         }
         lastAutoAttempt = now
 
+        let platforms = AccountPlatform.allCases
+            .filter { platform in store.accounts.contains { $0.platform == platform } }
+            .map(\.reportPlatform)
+        guard !platforms.isEmpty else { return }
+
         if settings.dailyEnabled {
             let window = ReportDates.dailyWindow(now: now, hour: 1)
-            if now >= window.end.addingTimeInterval(60),
-               !hasReport(kind: .daily, spaceID: space.id, periodEnd: window.end) {
-                isAutoRunning = true
-                let document = await generate(kind: .daily, store: store, now: now)
-                isAutoRunning = false
-                if let document {
-                    store.showToast("تم إنشاء \(document.kind.title) لـ \(document.displayDate) تلقائياً", .success)
+            if now >= window.end.addingTimeInterval(60) {
+                for platform in platforms
+                where !hasReport(kind: .daily, platform: platform, spaceID: space.id, periodEnd: window.end) {
+                    isAutoRunning = true
+                    let document = await generate(kind: .daily, platform: platform, store: store, now: now)
+                    isAutoRunning = false
+                    if let document {
+                        store.showToast("تم إنشاء \(document.kind.title) \(document.reportPlatform.defaultProgram) لـ \(document.displayDate) تلقائياً", .success)
+                    }
+                    return
                 }
-                return
             }
         }
 
@@ -355,21 +389,30 @@ final class ReportsManager: ObservableObject {
                 weekday: settings.weeklyWeekday,
                 hour: settings.weeklyHour
             )
-            if now >= window.end.addingTimeInterval(60),
-               !hasReport(kind: .weekly, spaceID: space.id, periodEnd: window.end) {
-                isAutoRunning = true
-                let document = await generate(kind: .weekly, store: store, now: now)
-                isAutoRunning = false
-                if let document {
-                    store.showToast("تم إنشاء \(document.kind.title) لـ \(document.displayDate) تلقائياً", .success)
+            if now >= window.end.addingTimeInterval(60) {
+                for platform in platforms
+                where !hasReport(kind: .weekly, platform: platform, spaceID: space.id, periodEnd: window.end) {
+                    isAutoRunning = true
+                    let document = await generate(kind: .weekly, platform: platform, store: store, now: now)
+                    isAutoRunning = false
+                    if let document {
+                        store.showToast("تم إنشاء \(document.kind.title) \(document.reportPlatform.defaultProgram) لـ \(document.displayDate) تلقائياً", .success)
+                    }
+                    return
                 }
             }
         }
     }
 
-    private func hasReport(kind: ReportKind, spaceID: String, periodEnd: Date) -> Bool {
+    private func hasReport(
+        kind: ReportKind,
+        platform: ReportPlatform,
+        spaceID: String,
+        periodEnd: Date
+    ) -> Bool {
         documents.contains { document in
             document.kind == kind &&
+            document.reportPlatform == platform &&
             document.spaceID == spaceID &&
             abs(document.periodEnd.timeIntervalSince(periodEnd)) < 2
         }
@@ -622,6 +665,111 @@ final class ReportsManager: ObservableObject {
         return oldest > 0 && oldest < startUnix
     }
 
+    /// يقرأ حساب إنستغرام العام وقت التوليد. الواجهة العامة تعرض نحو ١٢
+    /// منشوراً حديثاً، ومشاهدات الفيديو والريل فقط هي المتاحة. الإعجابات
+    /// متاحة لكل المنشورات لكنها لا تدخل أعمدة التقرير السبعة.
+    private func parseInstagram(
+        account: Account,
+        startUnix: Int,
+        endUnix: Int
+    ) async -> ParsedAccount {
+        let baseURL = account.url.isEmpty
+            ? "https://www.instagram.com/\(account.handle)/"
+            : account.url
+
+        do {
+            let result = try await DirectInstagramService.shared.fetch(
+                handle: account.handle,
+                url: baseURL,
+                createdAt: account.createdAt
+            )
+            let videos = result.videos
+            let windowVideos = videos.filter {
+                $0.createTime >= startUnix && $0.createTime < endUnix
+            }
+            let complete = instagramWindowComplete(
+                videos: videos,
+                startUnix: startUnix,
+                allPostsLoaded: result.account.allPostsLoaded
+            )
+            let views = windowVideos.reduce(Int64(0)) { $0 + $1.views }
+            let allExact = !windowVideos.isEmpty && windowVideos.allSatisfy { $0.viewsExact }
+
+            let quality: ReportQuality
+            let notes: String
+            if windowVideos.isEmpty {
+                quality = .partial
+                notes = "لم تُرجع الصفحة منشورات عامة داخل الفترة. قد تكون الصفحة جديدة أو تحدّ إنستغرام المحتوى العام."
+            } else if !complete {
+                quality = .partial
+                notes = "يعرض إنستغرام للزائر نحو ١٢ منشوراً حديثاً؛ قد توجد منشورات أخرى داخل الفترة. أعد التوليد لاحقاً."
+            } else if !allExact {
+                quality = .approximate
+                notes = "مشاهدات إنستغرام المتاحة علناً للفيديو والريل فقط؛ منشورات الصور بلا مشاهدات معلنة."
+            } else {
+                quality = .exact
+                notes = "مشاهدات ريل إنستغرام من الصفحة العامة."
+            }
+
+            let posts = windowVideos.map { video in
+                ReportPost(
+                    id: video.id,
+                    accountID: account.id,
+                    pageName: account.displayName,
+                    handle: account.handle,
+                    platform: .instagram,
+                    title: video.title,
+                    url: video.shareUrl ?? baseURL,
+                    publishedAt: Date(timeIntervalSince1970: TimeInterval(video.createTime)),
+                    views: video.views,
+                    likes: video.likes,
+                    comments: video.comments,
+                    shares: video.shares,
+                    viewsExact: video.viewsExact
+                )
+            }
+
+            let row = ReportRow(
+                accountID: account.id,
+                pageName: account.displayName,
+                platform: .instagram,
+                program: "إنستغرام",
+                posts: windowVideos.count,
+                views: views,
+                notes: notes,
+                url: baseURL,
+                quality: quality
+            )
+            return ParsedAccount(row: row, posts: posts)
+        } catch {
+            return ParsedAccount(
+                row: ReportRow(
+                    accountID: account.id,
+                    pageName: account.displayName,
+                    platform: .instagram,
+                    program: "إنستغرام",
+                    posts: nil,
+                    views: nil,
+                    notes: "تعذّرت قراءة حساب إنستغرام العام. أعد التوليد أو افتح التقرير لتعديله.",
+                    url: baseURL,
+                    quality: .unavailable
+                ),
+                posts: []
+            )
+        }
+    }
+
+    private func instagramWindowComplete(
+        videos: [VideoItem],
+        startUnix: Int,
+        allPostsLoaded: Bool
+    ) -> Bool {
+        if videos.isEmpty { return true }
+        if allPostsLoaded { return true }
+        let oldest = videos.map(\.createTime).min() ?? 0
+        return oldest > 0 && oldest < startUnix
+    }
+
     private func generatedNote(for groups: [ReportGroup]) -> String {
         let rows = groups.flatMap(\.rows)
         let incomplete = rows.filter { $0.quality == .partial || $0.quality == .unavailable }.count
@@ -629,10 +777,13 @@ final class ReportsManager: ObservableObject {
         let manual = rows.filter { $0.isManual || $0.quality == .manual }.count
         let hasFacebook = rows.contains { $0.platform == .facebook && !$0.isManual && $0.quality != .manual }
         let hasTikTok = rows.contains { $0.platform == .tiktok && !$0.isManual && $0.quality != .manual }
+        let hasInstagram = rows.contains { $0.platform == .instagram && !$0.isManual && $0.quality != .manual }
         var parts: [String] = []
 
         if incomplete == 0 && approximate == 0 {
-            if hasTikTok && hasFacebook {
+            if hasInstagram {
+                parts.append("تمت قراءة منشورات إنستغرام ومشاهداتها المتاحة علناً مباشرة وقت التوليد.")
+            } else if hasTikTok && hasFacebook {
                 parts.append("تمت قراءة منشورات TikTok وفيسبوك ومشاهداتها المتاحة مباشرة وقت التوليد.")
             } else if hasFacebook {
                 parts.append("تمت قراءة منشورات فيسبوك ومشاهدات الفيديو المتاحة علناً مباشرة وقت التوليد.")
@@ -647,6 +798,9 @@ final class ReportsManager: ObservableObject {
 
         if approximate > 0 && hasFacebook {
             parts.append("مشاهدات فيسبوك تُنشر للفيديو فقط؛ المنشورات النصية والصور لا تكشف مشاهدات عامة.")
+        }
+        if hasInstagram {
+            parts.append("مشاهدات إنستغرام تُنشر للفيديو والريل فقط؛ منشورات الصور لا تكشف مشاهدات عامة.")
         }
 
         if manual > 0 {
@@ -692,9 +846,11 @@ final class ReportsManager: ObservableObject {
             let dayKey = match.map { (name as NSString).substring(with: $0.range) }
                 ?? ReportDates.dayKey(created)
             let kind: ReportKind = name.contains("-Weekly-") ? .weekly : .daily
+            let platform = exportedPlatform(from: name)
             files.append(
                 ReportFile(
                     url: url,
+                    platform: platform,
                     kind: kind,
                     createdAt: created,
                     size: size,
@@ -703,6 +859,22 @@ final class ReportsManager: ObservableObject {
             )
         }
         exportedFiles = files.sorted { $0.createdAt > $1.createdAt }
+    }
+
+    /// يقرأ المنصة من اسم ملف مثل `Mutabaa-Instagram-Daily-2026-10-26.xlsx`.
+    private func exportedPlatform(from name: String) -> ReportPlatform {
+        let parts = name.split(separator: "-").map(String.init)
+        if parts.count > 1 {
+            switch parts[1].lowercased() {
+            case "tiktok": return .tiktok
+            case "facebook": return .facebook
+            case "instagram": return .instagram
+            case "youtube": return .youtube
+            default: break
+            }
+        }
+        // ملفات الإصدارات السابقة: Mutabaa-Daily-… كانت تقارير TikTok.
+        return .tiktok
     }
 
     func deleteExportedFile(_ file: ReportFile) {

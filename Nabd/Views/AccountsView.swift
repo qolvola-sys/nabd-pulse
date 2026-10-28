@@ -90,12 +90,15 @@ struct AccountsView: View {
             VStack(spacing: 16) {
                 header
                 #if MUTABAA
-                if platform == .facebook && !store.isDirect {
-                    facebookLockedCard
+                if platform != .tiktok && !store.isDirect {
+                    directLockedCard
                 }
                 #endif
                 summaryStrip
                 #if MUTABAA
+                if platform == .instagram {
+                    likesStrip
+                }
                 if platform == .tiktok {
                     facebookEntryCard
                 }
@@ -173,7 +176,7 @@ struct AccountsView: View {
         }
         #endif
         .confirmationDialog(
-            "إزالة \(platform == .facebook ? "" : "@")\(pendingDelete?.handle ?? "")؟",
+            "إزالة \(pendingDelete?.handleLabel ?? "")؟",
             isPresented: Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }),
             titleVisibility: .visible
         ) {
@@ -256,15 +259,15 @@ struct AccountsView: View {
         .accessibilityIdentifier("accounts-open-facebook")
     }
 
-    private var facebookLockedCard: some View {
+    private var directLockedCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label("فيسبوك يحتاج الوضع المباشر", systemImage: "exclamationmark.triangle.fill")
+            Label("\(platform.title) يحتاج الوضع المباشر", systemImage: "exclamationmark.triangle.fill")
                 .font(.system(size: 12, weight: .bold))
                 .foregroundColor(Theme.gold)
 
             Text(store.isDemo
-                 ? "أنت في الوضع التجريبي. أوقفه لتقرأ أرقام صفحات فيسبوك الحقيقية."
-                 : "أنت تستخدم الخادم الخاص. صفحة فيسبوك تقرأ الصفحات العامة مباشرة دون خادم. حسابات الخادم تبقى محفوظة ويمكن الرجوع إليها.")
+                 ? "أنت في الوضع التجريبي. أوقفه لتقرأ أرقام \(platform.title) الحقيقية."
+                 : "أنت تستخدم الخادم الخاص. \(platform.title) يقرأ الحسابات العامة مباشرة دون خادم. حسابات الخادم تبقى محفوظة ويمكن الرجوع إليها.")
                 .font(.system(size: 10.5))
                 .foregroundColor(Theme.textSecondary)
                 .lineSpacing(3)
@@ -776,13 +779,13 @@ struct AccountsView: View {
         HStack(alignment: .center, spacing: 10) {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
-                    if platform == .facebook {
-                        Image(systemName: "globe")
+                    if platform != .tiktok {
+                        Image(systemName: platform.icon)
                             .font(.system(size: 19, weight: .bold))
-                            .foregroundColor(Theme.cyan)
+                            .foregroundColor(platform == .facebook ? Theme.cyan : Theme.pink)
                     }
-                    Text(platform == .facebook ? "حسابات فيسبوك" : "الحسابات")
-                        .font(.system(size: platform == .facebook ? 22 : 26, weight: .heavy, design: .rounded))
+                    Text(platform == .tiktok ? "الحسابات" : "حسابات \(platform.title)")
+                        .font(.system(size: platform == .tiktok ? 26 : 22, weight: .heavy, design: .rounded))
                         .foregroundColor(Theme.text)
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
@@ -822,10 +825,10 @@ struct AccountsView: View {
                 .shadow(color: Theme.cyan.opacity(0.28), radius: 12, y: 6)
             }
             .buttonStyle(PressableStyle())
-            .disabled(platform == .facebook && !store.isDirect)
-            .opacity(platform == .facebook && !store.isDirect ? 0.45 : 1)
+            .disabled(platform != .tiktok && !store.isDirect)
+            .opacity(platform != .tiktok && !store.isDirect ? 0.45 : 1)
 
-            if platform == .facebook {
+            if platform != .tiktok {
                 Button {
                     store.haptic(.impact)
                     Task { await store.syncAll() }
@@ -847,7 +850,7 @@ struct AccountsView: View {
                 }
                 .buttonStyle(PressableStyle())
                 .disabled(store.isSyncing)
-                .accessibilityLabel("مزامنة صفحات فيسبوك")
+                .accessibilityLabel("مزامنة حسابات \(platform.title)")
 
                 Button {
                     dismiss()
@@ -860,7 +863,7 @@ struct AccountsView: View {
                         .overlay(Circle().strokeBorder(Theme.borderSoft, lineWidth: 1))
                 }
                 .buttonStyle(PressableStyle())
-                .accessibilityLabel("إغلاق صفحة فيسبوك")
+                .accessibilityLabel("إغلاق صفحة \(platform.title)")
             }
         }
     }
@@ -900,6 +903,48 @@ struct AccountsView: View {
                 .minimumScaleFactor(0.8)
         }
         .frame(maxWidth: .infinity)
+    }
+
+    /// إحصاءات تفاعل إنستغرام في بطاقة منفصلة عن المشاهدات.
+    private var likesStrip: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Image(systemName: "heart.fill")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(Theme.pink)
+                Text("إعجابات منشورات إنستغرام")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundColor(Theme.text)
+                Spacer(minLength: 4)
+                Text("آخر ٢٤ ساعة و٧ أيام")
+                    .font(.system(size: 9.5))
+                    .foregroundColor(Theme.textTertiary)
+            }
+
+            HStack(spacing: 0) {
+                stripItem(
+                    title: "إعجابات ٢٤س",
+                    value: Num.maybeApprox(platformSummary.likes24h, exact: platformSummary.dailyComplete),
+                    tint: Theme.pink
+                )
+                Rectangle().fill(Theme.borderSoft).frame(width: 1, height: 24)
+                stripItem(
+                    title: "إعجابات ٧ أيام",
+                    value: Num.maybeApprox(platformSummary.likes7d, exact: platformSummary.weeklyComplete),
+                    tint: Theme.violet
+                )
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Theme.pink.opacity(0.05))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(Theme.pink.opacity(0.18), lineWidth: 1)
+        )
     }
 
     private var sortChips: some View {
@@ -947,6 +992,14 @@ struct AccountsView: View {
             #endif
             return "الصق روابط صفحات فيسبوك العامة (حتى ٥٠٠ رابط دفعة واحدة) وسنرتّب لك المنشورات ومشاهدات الفيديو."
         }
+        if platform == .instagram {
+            #if MUTABAA
+            if store.spacesEnabled {
+                return "الصق روابط حسابات إنستغرام العامة (instagram.com/username أو @username) وستُضاف إلى مساحة «\(store.activeSpaceName)» مع مشاهداتها وإعجاباتها اليومية والأسبوعية."
+            }
+            #endif
+            return "الصق روابط حسابات إنستغرام العامة (instagram.com/username أو @username) وسنرتّب لك المشاهدات والإعجابات اليومية والأسبوعية."
+        }
         #if MUTABAA
         if store.spacesEnabled {
             return "الصق روابط حسابات TikTok (حتى ٥٠٠ رابط دفعة واحدة) وستُضاف إلى مساحة «\(store.activeSpaceName)» مع إحصاءاتها."
@@ -969,12 +1022,12 @@ struct AccountsView: View {
                 )
             } else {
                 EmptyStateView(
-                    icon: platform == .facebook ? "globe" : "person.badge.plus",
-                    title: platform == .facebook ? "ابدأ بإضافة صفحات فيسبوك" : "ابدأ بإضافة حساباتك",
+                    icon: platform == .tiktok ? "person.badge.plus" : platform.icon,
+                    title: platform == .tiktok ? "ابدأ بإضافة حساباتك" : "ابدأ بإضافة حسابات \(platform.title)",
                     message: emptyMessage,
-                    actionTitle: platform == .facebook && !store.isDirect ? "تشغيل الوضع المباشر" : "إضافة روابط",
+                    actionTitle: platform != .tiktok && !store.isDirect ? "تشغيل الوضع المباشر" : "إضافة روابط",
                     action: {
-                        if platform == .facebook && !store.isDirect {
+                        if platform != .tiktok && !store.isDirect {
                             store.enableDirectMode()
                             store.showToast("تم تشغيل الوضع المباشر", .success)
                         } else {
@@ -989,8 +1042,7 @@ struct AccountsView: View {
 
     private func copyLink(_ account: Account) {
         UIPasteboard.general.string = account.url
-        let label = account.platform == .facebook ? account.handle : "@\(account.handle)"
-        store.showToast("تم نسخ رابط \(label)", .success)
+        store.showToast("تم نسخ رابط \(account.handleLabel)", .success)
         store.haptic(.selection)
     }
 
@@ -1047,7 +1099,7 @@ struct AccountRow: View {
                         Image(systemName: account.platform.icon)
                             .font(.system(size: 8.5, weight: .bold))
                             .foregroundColor(account.isFacebook ? Theme.cyan : Theme.pink)
-                        Text(account.isFacebook ? account.handle : "@" + account.handle)
+                        Text(account.handleLabel)
                             .font(.system(size: 11))
                             .foregroundColor(Theme.textTertiary)
                             .lineLimit(1)
@@ -1093,6 +1145,32 @@ struct AccountRow: View {
                     .minimumScaleFactor(0.65)
                 Spacer(minLength: 4)
                 WeeklyScoreBadge(score: account.weeklyScore, compact: true, exact: account.weeklyScoreExact)
+            }
+
+            if account.isInstagram {
+                HStack(spacing: 7) {
+                    Image(systemName: "heart.fill")
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .foregroundColor(Theme.pink)
+                    Text("إعجابات ٢٤س")
+                        .font(.system(size: 9.5))
+                        .foregroundColor(Theme.textTertiary)
+                    Text(Num.maybeApprox(account.likes24h, exact: account.dailyComplete))
+                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                        .foregroundColor(Theme.textSecondary)
+                        .lineLimit(1)
+                    Text("·")
+                        .font(.system(size: 9.5))
+                        .foregroundColor(Theme.textTertiary)
+                    Text("٧ أيام")
+                        .font(.system(size: 9.5))
+                        .foregroundColor(Theme.textTertiary)
+                    Text(Num.maybeApprox(account.likes7d, exact: account.weeklyComplete))
+                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                        .foregroundColor(Theme.textSecondary)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                }
             }
 
             ProgressBarLine(
