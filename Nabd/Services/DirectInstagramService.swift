@@ -206,9 +206,18 @@ final class DirectInstagramService {
     /// نتيجة آخر محاولة لكل حساب: أي مصدر نجح وأيها فشل. تُعرض في شاشة
     /// الحساب عند تعذّر القراءة، حتى نعرف سبب الصفر بدل التخمين.
     private var diagnostics: [String: String] = [:]
+    /// تفصيل محاولات المرحّل: اسم الخدمة ورمز استجابتها. يظهر في شاشة
+    /// الحساب فقط، ويحدد هل الخدمة محجوبة أم ردّت بلا منشورات.
+    private var relayDetails: [String: String] = [:]
+    /// رمز استجابة آخر طلب لصفحة التضمين المباشرة.
+    private var embedStatusCode: Int?
 
     func diagnostic(for handle: String) -> String {
         diagnostics[handle.lowercased()] ?? "لم تُجرَّب بعد"
+    }
+
+    func relayDiagnostic(for handle: String) -> String {
+        relayDetails[handle.lowercased()] ?? ""
     }
 
     private func note(_ text: String, for handle: String) {
@@ -273,7 +282,7 @@ final class DirectInstagramService {
             // الحساب غير موجود فعلاً: لا فائدة من تجربة بقية المصادر.
             throw DirectInstagramError.notFound
         } catch {
-            trail.append("embed ✗")
+            trail.append("embed ✗\(embedStatusCode.map { String($0) } ?? "t")")
         }
 
         // ١) مرحّل خارجي يقرأ صفحة التضمين من شبكته هو. هذا هو المسار الذي
@@ -497,6 +506,7 @@ final class DirectInstagramService {
             }
         }
         guard !urls.isEmpty else { throw DirectInstagramError.invalidLink }
+        embedStatusCode = nil
 
         // واجهة الهاتف هي التي تعيد contextJSON فعلاً. نجرّبها أولاً بجلسة
         // نظيفة، ثم بجلسة التطبيق (بكوكيز) لأن بعض الشبكات ترفض الجلسة
@@ -550,6 +560,8 @@ final class DirectInstagramService {
 
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw DirectInstagramError.badResponse }
+        // نحفظ الرمز كي يظهر في سطر التشخيص (429 مقابل حجب مقابل مهلة).
+        embedStatusCode = http.statusCode
         if http.statusCode == 404 { throw DirectInstagramError.notFound }
         guard (200..<300).contains(http.statusCode),
               let html = String(data: data, encoding: .utf8),
@@ -713,24 +725,50 @@ final class DirectInstagramService {
             throw DirectInstagramError.invalidLink
         }
         let raw = target.absoluteString
+        let key = handle.lowercased()
+        var tokens: [String] = []
         var lastError: DirectInstagramError = .blocked
 
-        // أ) خدمة قراءة صفحات تعيد HTML كاملاً بعد تنفيذ JavaScript.
-        //    هي الأسرع (ثانية تقريباً) وأكثر ما نجح في الاختبار.
+        func success(_ name: String, _ result: DirectInstagramResult) -> DirectInstagramResult {
+            tokens.append("\(name)✓\(result.videos.count)")
+            relayDetails[key] = tokens.joined(separator: " · ")
+            return result
+        }
+
+        // أ) قارئ صفحات يعيد HTML كاملاً بعد تنفيذ JavaScript. الأسرع.
         if let url = URL(string: "https://r.jina.ai/\(raw)") {
             do {
-                let html = try await relayGet(url, accept: "text/html")
-                if let context = embedContext(in: html) {
-                    return try makeEmbedResult(context: context, reference: reference, createdAt: createdAt)
+                let (status, body) = try await relayGet(url, accept: "text/html")
+                if let context = embedContext(in: body) {
+                    let result = try makeEmbedResult(context: context, reference: reference, createdAt: createdAt)
+                    return success("jina", result)
                 }
+                tokens.append("jina✗\(status)")
                 lastError = .badResponse
             } catch {
+                tokens.append("jina✗t")
                 lastError = .blocked
             }
         }
 
-        // ب) خدمة ثانية تعيد الصفحة داخل JSON. تُستخدم إن فشلت الأولى أو
-        //    استنفدت حصتها المؤقتة.
+        // ب) وسيط Google: يفتح الصفحة من خوادم Google نفسها. ينجح غالباً
+        //    حتى عندما تحجب الشبكة خدمات القراءة المتخصصة.
+        if let url = URL(string: "https://www-instagram-com.translate.goog/\(handle)/embed/?_x_tr_sl=auto&_x_tr_tl=en&_x_tr_hl=en") {
+            do {
+                let (status, body) = try await relayGet(url, accept: "text/html")
+                if let context = embedContext(in: body) {
+                    let result = try makeEmbedResult(context: context, reference: reference, createdAt: createdAt)
+                    return success("google", result)
+                }
+                tokens.append("google✗\(status)")
+                lastError = .badResponse
+            } catch {
+                tokens.append("google✗t")
+                lastError = .blocked
+            }
+        }
+
+        // ج) خدمة ثالثة تعيد الصفحة داخل JSON.
         var components = URLComponents(string: "https://api.microlink.io/")
         components?.queryItems = [
             URLQueryItem(name: "url", value: raw),
@@ -739,29 +777,36 @@ final class DirectInstagramService {
         ]
         if let url = components?.url {
             do {
-                let body = try await relayGet(url, accept: "application/json")
+                let (status, body) = try await relayGet(url, accept: "application/json")
                 if let data = body.data(using: .utf8),
                    let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                    let payload = root["data"] as? [String: Any],
                    let html = payload["html"] as? String,
                    let context = embedContext(in: html) {
-                    return try makeEmbedResult(context: context, reference: reference, createdAt: createdAt)
+                    let result = try makeEmbedResult(context: context, reference: reference, createdAt: createdAt)
+                    return success("micro", result)
                 }
                 // بعض الاستجابات تعيد HTML خاماً بدل JSON.
                 if let context = embedContext(in: body) {
-                    return try makeEmbedResult(context: context, reference: reference, createdAt: createdAt)
+                    let result = try makeEmbedResult(context: context, reference: reference, createdAt: createdAt)
+                    return success("micro", result)
                 }
+                tokens.append("micro✗\(status)")
                 lastError = .badResponse
             } catch {
+                tokens.append("micro✗t")
                 lastError = .blocked
             }
         }
 
+        relayDetails[key] = tokens.joined(separator: " · ")
         throw lastError
     }
 
-    private func relayGet(_ url: URL, accept: String) async throws -> String {
-        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 25)
+    /// رمز الاستجابة مع النص. لا يرمي عند 4xx/5xx كي نستطيع تدوين الرمز
+    /// في التشخيص بدل فشل صامت.
+    private func relayGet(_ url: URL, accept: String) async throws -> (status: Int, body: String) {
+        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 20)
         request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
         request.setValue(accept, forHTTPHeaderField: "Accept")
         request.setValue("en-US,en;q=0.9", forHTTPHeaderField: "Accept-Language")
@@ -769,11 +814,10 @@ final class DirectInstagramService {
         request.setValue("html", forHTTPHeaderField: "x-respond-with")
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse,
-              (200..<300).contains(http.statusCode),
               let text = String(data: data, encoding: .utf8) else {
             throw DirectInstagramError.blocked
         }
-        return text
+        return (http.statusCode, text)
     }
 
     private func parseProfileHTML(

@@ -37,6 +37,11 @@ struct AccountDetailView: View {
         return current.status == "pending" && current.fetchedVideos == 0
     }
 
+    /// نتيجة محاولات المرحّل الأخيرة، مثل: jina✗403 · google✓6.
+    private var relayDetailText: String {
+        DirectInstagramService.shared.relayDiagnostic(for: current.handle)
+    }
+
     /// إنستغرام قد يعطي الإعجابات دون مشاهدات الفيديو، فلا نعرض صفراً مضللاً.
     private var instagramViewsUnknown: Bool {
         current.isInstagram
@@ -248,13 +253,26 @@ struct AccountDetailView: View {
             // تشخيص ظاهر فقط عند فشل قراءة منشورات إنستغرام: يوضّح أي
             // مصدر نجح وأيها فشل، حتى لا يبقى الصفر بلا تفسير.
             if current.isInstagram && numbersUnavailable {
-                Text("تشخيص القراءة: \(DirectInstagramService.shared.diagnostic(for: current.handle))")
-                    .font(.system(size: 9, design: .monospaced))
-                    .foregroundColor(Theme.textTertiary)
-                    .multilineTextAlignment(.center)
-                    .lineLimit(4)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, 8)
+                VStack(spacing: 3) {
+                    Text("تشخيص القراءة [\(AppVariant.version)]: \(DirectInstagramService.shared.diagnostic(for: current.handle))")
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundColor(Theme.textTertiary)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(4)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if !relayDetailText.isEmpty {
+                        // نتيجة كل خدمة مرحّل ورمز ردّها: يحدد إن كانت
+                        // الخدمة محجوبة أم ردّت بلا منشورات.
+                        Text("المرحّل: \(relayDetailText)")
+                            .font(.system(size: 8.5, design: .monospaced))
+                            .foregroundColor(Theme.textTertiary)
+                            .multilineTextAlignment(.center)
+                            .lineLimit(3)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .padding(.horizontal, 8)
+                .textSelection(.enabled)
             }
         }
         .frame(maxWidth: .infinity)
