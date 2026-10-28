@@ -1163,6 +1163,15 @@ struct AccountRow: View {
                             .foregroundColor(Theme.gold)
                             .lineLimit(2)
                     }
+                    if numbersUnavailable, account.isInstagram {
+                        // أي مصدر نجح وأيها فشل — يظهر للمستخدم حتى نعرف
+                        // سبب تعذّر القراءة بدل رسالة عامة.
+                        Text(DirectInstagramService.shared.diagnostic(for: account.handle))
+                            .font(.system(size: 7.5, design: .monospaced))
+                            .foregroundColor(Theme.textTertiary)
+                            .lineLimit(2)
+                            .minimumScaleFactor(0.8)
+                    }
                 }
 
                 Spacer(minLength: 6)

@@ -319,6 +319,18 @@ final class DirectInstagramService {
             }
         }
 
+        // ٤) مرحّل عام (proxy): يقرأ الصفحة من عنوان IP آخر. يُستخدم فقط
+        // عند فشل كل ما سبق، لأن بعض الشبكات تحجب إنستغرام بالكامل.
+        // لا يُرسل إلا اسم الحساب العام.
+        if best == nil || (best?.videos.isEmpty ?? true) {
+            if let relayResult = try? await fetchRelay(reference: reference, createdAt: createdAt) {
+                trail.append("relay ✓\(relayResult.videos.count)")
+                note(trail.joined(separator: " · "), for: key)
+                return relayResult
+            }
+            trail.append("relay ✗")
+        }
+
         note(trail.joined(separator: " · "), for: key)
 
         // لا منشورات من أي مصدر: نعيد أفضل ما قُرئ بدل إسقاطه.
@@ -688,6 +700,50 @@ final class DirectInstagramService {
         return try parseProfileHTML(html, reference: reference, createdAt: createdAt)
     }
 
+    /// آخر حل: قراءة صفحة التضمين عبر مرحّل عام يخرج بعنوان IP مختلف.
+    /// مفيد عندما تحجب الشبكة إنستغرام كلياً. لا يُرسل إلا اسم الحساب
+    /// العام، ولا يُستخدم إلا بعد فشل كل المصادر السابقة.
+    private func fetchRelay(reference: InstagramProfileReference, createdAt: String?) async throws -> DirectInstagramResult {
+        let handle = reference.handle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !handle.isEmpty else { throw DirectInstagramError.invalidLink }
+        guard let target = URL(string: "https://www.instagram.com/\(handle)/embed/") else {
+            throw DirectInstagramError.invalidLink
+        }
+        let encoded = target.absoluteString.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed)
+            ?? target.absoluteString
+
+        let relays = [
+            "https://api.allorigins.win/raw?url=\(encoded)",
+            "https://api.codetabs.com/v1/proxy?quest=\(encoded)",
+        ]
+
+        var lastError: DirectInstagramError = .blocked
+        for relay in relays {
+            guard let url = URL(string: relay) else { continue }
+            var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 20)
+            request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+            request.setValue("text/html,application/xhtml+xml", forHTTPHeaderField: "Accept")
+            request.setValue("en-US,en;q=0.9", forHTTPHeaderField: "Accept-Language")
+            do {
+                let (data, response) = try await session.data(for: request)
+                guard let http = response as? HTTPURLResponse,
+                      (200..<300).contains(http.statusCode),
+                      let html = String(data: data, encoding: .utf8) else {
+                    lastError = .blocked
+                    continue
+                }
+                guard let context = embedContext(in: html) else {
+                    lastError = .badResponse
+                    continue
+                }
+                return try makeEmbedResult(context: context, reference: reference, createdAt: createdAt)
+            } catch {
+                lastError = .blocked
+            }
+        }
+        throw lastError
+    }
+
     private func parseProfileHTML(
         _ html: String,
         reference: InstagramProfileReference,
@@ -811,7 +867,7 @@ final class DirectInstagramService {
             weeklyViewsExact: false,
             allPostsLoaded: false,
             status: "pending",
-            error: "إنستغرام حجب قراءة منشورات هذا الحساب من شبكتك الآن؛ اضغط «مزامنة» لإعادة المحاولة.",
+            error: "لم تُرجع إنستغرام منشورات هذا الحساب لهذا الطلب. قد تكون الشبكة تحجب القراءة أو الحساب مقيّداً؛ اضغط «مزامنة» لإعادة المحاولة.",
             lastSyncedAt: ISO8601DateFormatter.nabd.string(from: Date()),
             createdAt: createdAt ?? ISO8601DateFormatter.nabd.string(from: Date())
         )
