@@ -640,8 +640,16 @@ final class AppStore: ObservableObject {
                 if result.videos.isEmpty {
                     fresh = preservingVideoStats(in: fresh, from: account)
                 }
-                fresh.status = "public"
-                fresh.error = nil
+                // لا نعلن «بيانات مباشرة» إن اكتفينا بوسوم og أو فشلت
+                // قراءة المنشورات؛ نُبقي الحساب بانتظار التحديث مع سبب واضح
+                // بدل عرض أصفار تبدو أرقاماً حقيقية.
+                if result.account.status == "pending" {
+                    fresh.status = "pending"
+                    fresh.error = result.account.error
+                } else {
+                    fresh.status = "public"
+                    fresh.error = nil
+                }
                 updated[account.id] = fresh
                 if !result.videos.isEmpty {
                     directVideos[fresh.videoCacheKey] = result.videos
@@ -650,8 +658,11 @@ final class AppStore: ObservableObject {
             } catch {
                 // لا نستبدل الأرقام المحفوظة عند تعذّر الاتصال، ولا نعرض خطأ أحمر.
                 var stable = account
-                stable.status = (stable.fetchedVideos > 0 || stable.views > 0) ? "cached" : "pending"
-                stable.error = nil
+                let hasData = stable.fetchedVideos > 0 || stable.views > 0 || stable.followers > 0
+                stable.status = hasData ? "cached" : "pending"
+                stable.error = hasData
+                    ? nil
+                    : ((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
                 stable.publicStats = stable.publicStats || !stable.connected
                 updated[account.id] = stable
             }
@@ -768,8 +779,13 @@ final class AppStore: ObservableObject {
                 if result.videos.isEmpty {
                     fresh = preservingVideoStats(in: fresh, from: account)
                 }
-                fresh.status = "public"
-                fresh.error = nil
+                if result.account.status == "pending" {
+                    fresh.status = "pending"
+                    fresh.error = result.account.error
+                } else {
+                    fresh.status = "public"
+                    fresh.error = nil
+                }
                 if let index = accounts.firstIndex(where: { $0.id == account.id }) {
                     accounts[index] = fresh
                     summary = Summary.make(from: accounts)
@@ -778,12 +794,20 @@ final class AppStore: ObservableObject {
                     directVideos[fresh.videoCacheKey] = result.videos
                 }
                 saveDirectAccounts()
-                showToast("تم تحديث \(account.platform.accountNoun) \(account.handleLabel)", .success)
-                haptic(.success)
+                if fresh.status == "pending" {
+                    showToast("أُضيف \(account.platform.accountNoun) \(account.handleLabel) — الأرقام ستُحدَّث تلقائياً", .info)
+                    haptic(.impact)
+                } else {
+                    showToast("تم تحديث \(account.platform.accountNoun) \(account.handleLabel)", .success)
+                    haptic(.success)
+                }
             } catch {
+                let hasData = account.fetchedVideos > 0 || account.views > 0 || account.followers > 0
                 if let index = accounts.firstIndex(where: { $0.id == account.id }) {
-                    accounts[index].status = (account.fetchedVideos > 0 || account.views > 0) ? "cached" : "pending"
-                    accounts[index].error = nil
+                    accounts[index].status = hasData ? "cached" : "pending"
+                    accounts[index].error = hasData
+                        ? nil
+                        : ((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
                     summary = Summary.make(from: accounts)
                 }
                 saveDirectAccounts()
@@ -858,11 +882,26 @@ final class AppStore: ObservableObject {
                 invalid.append(raw)
                 continue
             }
-            if accounts.contains(where: {
+            if let existingIndex = accounts.firstIndex(where: {
                 $0.platform == platform && $0.handle.lowercased() == handle.lowercased()
             }) {
-                skipped.append(SkippedAccount(handle: handle, reason: "duplicate"))
-                continue
+                let existing = accounts[existingIndex]
+                let resolved = existing.status == "public" || existing.status == "ok"
+                let hasNumbers = existing.fetchedVideos > 0 || existing.followers > 0
+                if resolved && hasNumbers {
+                    skipped.append(SkippedAccount(handle: handle, reason: "duplicate"))
+                    continue
+                }
+                // حساب قديم بلا أي بيانات مقروءة: نحذف صفه ونعيد المحاولة
+                // بدل اعتباره مكرراً. هذا هو السبب الذي كان يمنع إضافة
+                // الصفحات بعد أول محاولة فاشلة.
+                accounts.remove(at: existingIndex)
+                directVideos.removeValue(forKey: existing.videoCacheKey)
+                #if MUTABAA
+                if let spaceIndex = spaces.firstIndex(where: { $0.id == activeSpaceID }) {
+                    spaces[spaceIndex].groupMembership.removeValue(forKey: existing.id)
+                }
+                #endif
             }
 
             let idPrefix: String

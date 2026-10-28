@@ -76,7 +76,10 @@ enum FacebookPageParser {
             lower.hasPrefix("fb.com") ||
             lower.hasPrefix("www.fb.com") ||
             lower.hasPrefix("fb.me") ||
-            lower.hasPrefix("www.fb.me") {
+            lower.hasPrefix("www.fb.me") ||
+            lower.hasPrefix("fb.watch") ||
+            lower.hasPrefix("www.fb.watch") ||
+            lower.hasPrefix("fbwat.ch") {
             input = "https://" + input
         } else if lower.hasPrefix("profile.php") {
             input = "https://www.facebook.com/" + input
@@ -108,8 +111,9 @@ enum FacebookPageParser {
             .map { String($0).removingPercentEncoding ?? String($0) }
         guard let first = path.first, !first.isEmpty else { return nil }
 
-        // روابط fb.me المختصرة تُحل عند الجلب.
-        if host == "fb.me" || host == "www.fb.me" {
+        // روابط fb.me وfb.watch المختصرة تُحل عند الجلب.
+        if host == "fb.me" || host == "www.fb.me" ||
+            host == "fb.watch" || host == "www.fb.watch" || host == "fbwat.ch" {
             return unresolvedReference(
                 url: components.url?.absoluteString ?? input,
                 code: first,
@@ -138,6 +142,21 @@ enum FacebookPageParser {
             guard let id else { return nil }
             if isNumeric(id) { return numericReference(id) }
             return referenceForHandle(id)
+        }
+
+        // روابط منشورات قديمة تحمل رقم الصفحة في ?id= بدل اسم الصفحة:
+        // story.php وpermalink.php وphoto.php. هذه أكثر الصيغ التي ينسخها
+        // المستخدم من تطبيق فيسبوك، وكانت تُرفض سابقاً فلا تُضاف الصفحة.
+        if ["story.php", "permalink.php", "photo.php", "photo"].contains(first.lowercased()) {
+            if let id = components.queryItems?.first(where: { $0.name == "id" })?.value,
+               isNumeric(id) {
+                return numericReference(id)
+            }
+            if let handle = components.queryItems?.first(where: { $0.name == "username" })?.value,
+               isValidHandle(handle) {
+                return referenceForHandle(handle)
+            }
+            return nil
         }
 
         if first.lowercased() == "pages" || first.lowercased() == "people" {
@@ -200,7 +219,10 @@ enum FacebookPageParser {
         host == "fb.com" ||
         host == "www.fb.com" ||
         host == "fb.me" ||
-        host == "www.fb.me"
+        host == "www.fb.me" ||
+        host == "fb.watch" ||
+        host == "www.fb.watch" ||
+        host == "fbwat.ch"
     }
 
     /// يستخرج رقم الصفحة من المسار، مثل `PageName-123456` أو
@@ -343,20 +365,36 @@ enum FacebookPageParser {
             canonicalURL = "https://www.facebook.com/\(handle)"
         }
 
-        guard !title.isEmpty else {
-            if isLogin { throw DirectFacebookError.blocked }
-            throw DirectFacebookError.notFound
-        }
-        if isLogin && title.lowercased() == "facebook" {
-            throw DirectFacebookError.blocked
-        }
+        // تمييز صفحة تسجيل الدخول عن الصفحة الحقيقية. سابقاً كانت أي صفحة
+        // تعيد «Facebook» تُعد صفحة غير موجودة، وبعض الصفحات العربية كانت
+        // تُحفظ باسم «تسجيل الدخول إلى فيسبوك».
+        let titleLower = title.lowercased()
+        let loginTitle = titleLower == "facebook"
+            || titleLower.contains("log in")
+            || titleLower.contains("log into")
+            || titleLower.contains("login")
+            || titleLower.contains("sign up")
+            || titleLower.contains("تسجيل الدخول")
+            || titleLower.contains("دخول إلى فيسبوك")
+            || titleLower.contains("إنشاء حساب")
+        if titleLower == "facebook" { throw DirectFacebookError.blocked }
+        if loginTitle && (isLogin || pageURL.isEmpty) { throw DirectFacebookError.blocked }
 
-        let displayName = cleanedPageName(title)
-        guard !displayName.isEmpty else { throw DirectFacebookError.notFound }
+        var displayName = cleanedPageName(title)
+        if displayName.isEmpty || loginTitle {
+            if let userVanity, isValidHandle(userVanity) {
+                displayName = userVanity
+            } else if !handle.isEmpty, !isNumeric(handle) {
+                displayName = handle
+            } else {
+                if isLogin { throw DirectFacebookError.blocked }
+                throw DirectFacebookError.notFound
+            }
+        }
 
         let avatar = profilePicture(in: objects) ?? (ogImage.isEmpty ? nil : decodeHTMLEntities(ogImage))
 
-        let social = socialCounts(in: objects)
+        let social = socialCounts(in: objects, html: html)
         let followers = social.followers.value
         let following = social.following.value
         let followersExact = social.followers.exact
@@ -437,26 +475,40 @@ enum FacebookPageParser {
     // MARK: - المنشورات
 
     private static func parsePosts(in objects: [Any]) -> [VideoItem] {
-        guard let feed = firstDictionary(forKey: "timeline_list_feed_units", in: objects),
-              let edges = feed["edges"] as? [Any] else { return [] }
+        // نعتمد أولاً على خلاصة الصفحة الرسمية timeline_list_feed_units لأنها
+        // منشورات الصفحة نفسها فقط. القراءة العامة من كل JSON احتياط للحالات
+        // التي يتغيّر فيها اسم الخلاصة، وقد تجمع منشورات مقترحة، لذا لا
+        // نستخدمها إلا عند غياب الخلاصة.
+        var nodes: [[String: Any]] = []
+        if let feed = firstDictionary(forKey: "timeline_list_feed_units", in: objects),
+           let edges = feed["edges"] as? [Any] {
+            for edge in edges {
+                if let node = (edge as? [String: Any])?["node"] as? [String: Any] {
+                    nodes.append(node)
+                }
+            }
+        }
+        if nodes.isEmpty {
+            for object in objects {
+                collectPostNodes(in: object, into: &nodes)
+                if nodes.count >= 40 { break }
+            }
+        }
 
         var seen = Set<String>()
         var posts: [VideoItem] = []
-        for edge in edges {
-            guard let node = (edge as? [String: Any])?["node"] as? [String: Any] else { continue }
-            guard let creationTime = firstInt(forKey: "creation_time", in: node), creationTime > 0 else { continue }
+        for node in nodes.prefix(40) {
+            guard let creationTime = int64(from: node["creation_time"]), creationTime > 0 else { continue }
 
             let postID = firstString(forKey: "post_id", in: node)
                 ?? firstString(forKey: "story_fbid", in: node)
                 ?? "\(creationTime)-\(posts.count)"
-            guard !seen.contains(postID) else { continue }
-            seen.insert(postID)
+            guard seen.insert(postID).inserted else { continue }
 
             let permalink = postPermalink(in: node, postID: postID)
-            let hasVideo = isVideoPost(in: node, permalink: permalink)
+            let viewsValue = maxInt64(forKey: "video_view_count", in: node)
+            let hasVideo = isVideoPost(in: node, permalink: permalink) || viewsValue != nil
             let message = postMessage(in: node)
-            let viewsValue = hasVideo ? firstInt64(forKey: "video_view_count", in: node) : nil
-            let views = viewsValue ?? 0
             let image = postImage(in: node, hasVideo: hasVideo)
 
             let title: String
@@ -475,7 +527,7 @@ enum FacebookPageParser {
                 shareUrl: permalink,
                 duration: 0,
                 createTime: creationTime,
-                views: views,
+                views: viewsValue ?? 0,
                 likes: reactionCount(in: node),
                 comments: commentCount(in: node),
                 shares: shareCount(in: node),
@@ -486,6 +538,36 @@ enum FacebookPageParser {
         }
 
         return posts.sorted { $0.createTime > $1.createTime }
+    }
+
+    private static func collectPostNodes(
+        in object: Any,
+        into posts: inout [[String: Any]],
+        depth: Int = 0
+    ) {
+        guard depth < 40, posts.count < 40 else { return }
+        if let dictionary = object as? [String: Any] {
+            if isPostNode(dictionary) {
+                posts.append(dictionary)
+                return
+            }
+            for value in dictionary.values {
+                collectPostNodes(in: value, into: &posts, depth: depth + 1)
+            }
+        } else if let array = object as? [Any] {
+            for value in array {
+                collectPostNodes(in: value, into: &posts, depth: depth + 1)
+            }
+        }
+    }
+
+    private static func isPostNode(_ dictionary: [String: Any]) -> Bool {
+        guard let creation = int64(from: dictionary["creation_time"]),
+              creation > 1_000_000_000 else { return false }
+        return dictionary["post_id"] != nil
+            || dictionary["story_fbid"] != nil
+            || dictionary["permalink_url"] != nil
+            || dictionary["comet_sections"] != nil
     }
 
     private static func postPermalink(in node: [String: Any], postID: String) -> String {
@@ -500,7 +582,24 @@ enum FacebookPageParser {
             return true
         }
         if firstString(forKey: "videoId", in: node) != nil { return true }
-        if firstInt64(forKey: "video_view_count", in: node) != nil { return true }
+        return containsVideoMarker(in: node)
+    }
+
+    private static func containsVideoMarker(in object: Any, depth: Int = 0) -> Bool {
+        guard depth < 25 else { return false }
+        if let dictionary = object as? [String: Any] {
+            if let type = dictionary["__typename"] as? String, type == "Video" { return true }
+            if dictionary["videoId"] != nil || dictionary["video_id"] != nil { return true }
+            if let flag = dictionary["is_video"] as? Bool, flag { return true }
+            if let flag = dictionary["isVideo"] as? Bool, flag { return true }
+            for value in dictionary.values {
+                if containsVideoMarker(in: value, depth: depth + 1) { return true }
+            }
+        } else if let array = object as? [Any] {
+            for value in array where !(value is String) {
+                if containsVideoMarker(in: value, depth: depth + 1) { return true }
+            }
+        }
         return false
     }
 
@@ -574,39 +673,75 @@ enum FacebookPageParser {
     // MARK: - إحصاءات التفاعل
 
     private static func reactionCount(in node: [String: Any]) -> Int64 {
-        if let dictionary = firstDictionary(forKey: "reaction_count", in: node),
-           let count = int64(from: dictionary["count"]) {
-            return count
-        }
-        if let raw = firstValue(forKey: "reaction_count", in: node),
-           let count = int64(from: raw) {
-            return count
-        }
-        return 0
+        // نأخذ أكبر قيمة لأن ردود الفعل الجزئية (top_reactions) قد تظهر قبل
+        // المجموع في ترتيب غير ثابت، وكان ذلك يعرض رقماً أقل من الحقيقي.
+        maxInt64(forKey: "reaction_count", in: node) ?? 0
     }
 
     private static func commentCount(in node: [String: Any]) -> Int64 {
-        if let renderer = firstDictionary(forKey: "comment_rendering_instance", in: node),
-           let comments = renderer["comments"] as? [String: Any],
-           let count = int64(from: comments["total_count"]) {
-            return count
+        var counts: [Int64] = []
+        collectCommentTotals(in: node, into: &counts)
+        return counts.max() ?? 0
+    }
+
+    private static func collectCommentTotals(
+        in object: Any,
+        into counts: inout [Int64],
+        depth: Int = 0
+    ) {
+        guard depth < 30 else { return }
+        if let dictionary = object as? [String: Any] {
+            if let renderer = dictionary["comment_rendering_instance"] as? [String: Any],
+               let comments = renderer["comments"] as? [String: Any],
+               let count = int64(from: comments["total_count"]) {
+                counts.append(count)
+            }
+            if let count = int64(from: dictionary["total_comment_count"]) {
+                counts.append(count)
+            }
+            for value in dictionary.values {
+                collectCommentTotals(in: value, into: &counts, depth: depth + 1)
+            }
+        } else if let array = object as? [Any] {
+            for value in array {
+                collectCommentTotals(in: value, into: &counts, depth: depth + 1)
+            }
         }
-        if let count = firstInt64(forKey: "total_comment_count", in: node) {
-            return count
-        }
-        return 0
     }
 
     private static func shareCount(in node: [String: Any]) -> Int64 {
-        if let dictionary = firstDictionary(forKey: "share_count", in: node),
-           let count = int64(from: dictionary["count"]) {
-            return count
+        maxInt64(forKey: "share_count", in: node) ?? 0
+    }
+
+    /// أكبر قيمة رقمية للمفتاح داخل المنشور. تصلح للمجاميع مثل
+    /// reaction_count وshare_count وvideo_view_count حتى لو تكررت في
+    /// أقسام فرعية متعددة.
+    private static func maxInt64(forKey key: String, in object: Any, depth: Int = 0) -> Int64? {
+        guard depth < 30 else { return nil }
+        if let dictionary = object as? [String: Any] {
+            var best: Int64?
+            if let raw = dictionary[key], let number = int64(from: raw) {
+                best = number
+            } else if let nested = dictionary[key] as? [String: Any] {
+                best = int64(from: nested["count"] ?? nested["total_count"] ?? nested["value"])
+            }
+            for (nestedKey, value) in dictionary where nestedKey != key {
+                if let found = maxInt64(forKey: key, in: value, depth: depth + 1) {
+                    best = max(best ?? found, found)
+                }
+            }
+            return best
         }
-        if let raw = firstValue(forKey: "share_count", in: node),
-           let count = int64(from: raw) {
-            return count
+        if let array = object as? [Any] {
+            var best: Int64?
+            for value in array {
+                if let found = maxInt64(forKey: key, in: value, depth: depth + 1) {
+                    best = max(best ?? found, found)
+                }
+            }
+            return best
         }
-        return 0
+        return nil
     }
 
     // MARK: - الملف الشخصي
@@ -634,7 +769,10 @@ enum FacebookPageParser {
         var exact: Bool
     }
 
-    private static func socialCounts(in objects: [Any]) -> (followers: SocialCount, following: SocialCount) {
+    private static func socialCounts(
+        in objects: [Any],
+        html: String
+    ) -> (followers: SocialCount, following: SocialCount) {
         var followers = SocialCount(value: 0, exact: false)
         var following = SocialCount(value: 0, exact: false)
 
@@ -656,7 +794,48 @@ enum FacebookPageParser {
             }
         }
 
+        // احتياط: بعض الصفحات لا تُرجع profile_social_context للزائر،
+        // لكنها تضع العدد الحقيقي في JSON أو في وصف الصفحة.
+        if followers.value == 0 {
+            if let exact = firstRegexInt(#""follower_count"\s*:\s*([0-9]+)"#, in: html) {
+                followers = SocialCount(value: exact, exact: true)
+            } else if let exact = firstRegexInt(#""followerCount"\s*:\s*([0-9]+)"#, in: html) {
+                followers = SocialCount(value: exact, exact: true)
+            } else if let parsed = humanCountNearMarker(in: html, markers: ["followers", "follower", "متابع"]) {
+                followers = SocialCount(value: parsed, exact: false)
+            }
+        }
+        if following.value == 0 {
+            if let exact = firstRegexInt(#""following_count"\s*:\s*([0-9]+)"#, in: html) {
+                following = SocialCount(value: exact, exact: true)
+            } else if let parsed = humanCountNearMarker(in: html, markers: ["following", "يتابع"]) {
+                following = SocialCount(value: parsed, exact: false)
+            }
+        }
+
         return (followers, following)
+    }
+
+    /// يقرأ «28M followers» أو «١٢٣٤ متابع» من نص الصفحة.
+    private static func humanCountNearMarker(in html: String, markers: [String]) -> Int64? {
+        let plain = stripTags(html)
+        let lower = normalizeDigits(plain).lowercased()
+        for marker in markers {
+            guard let markerRange = lower.range(of: marker) else { continue }
+            let prefix = String(lower[..<markerRange.lowerBound])
+            guard let numberRange = prefix.range(of: #"([0-9][0-9,\.]*\s*(?:k|m|b|ألف|الف|مليون|مليار)?)\s*$"#,
+                                              options: .regularExpression) else { continue }
+            if let parsed = parseHumanCount(String(prefix[numberRange])) {
+                return parsed.value
+            }
+        }
+        return nil
+    }
+
+    private static func stripTags(_ html: String) -> String {
+        guard let regex = try? NSRegularExpression(pattern: #"<[^>]+>"#) else { return html }
+        let range = NSRange(html.startIndex..., in: html)
+        return regex.stringByReplacingMatches(in: html, range: range, withTemplate: " ")
     }
 
     /// يقرأ أرقام فيسبوك المعروضة مثل «٢٨ مليون» أو «28M» أو «1,234».
@@ -778,8 +957,18 @@ enum FacebookPageParser {
         if let int = value as? Int { return Int64(int) }
         if let int64 = value as? Int64 { return int64 }
         if let number = value as? NSNumber { return number.int64Value }
-        if let string = value as? String { return Int64(string) }
+        if let double = value as? Double { return Int64(double) }
+        if let string = value as? String {
+            let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let parsed = Int64(trimmed) { return parsed }
+            if let parsed = Double(trimmed) { return Int64(parsed) }
+        }
         return nil
+    }
+
+    private static func firstRegexInt(_ pattern: String, in string: String) -> Int64? {
+        guard let group = firstRegexGroup(pattern, in: string) else { return nil }
+        return Int64(group)
     }
 
     private static func firstRegexGroup(_ pattern: String, in string: String) -> String? {
@@ -851,15 +1040,18 @@ enum FacebookPageParser {
 final class DirectFacebookService {
     static let shared = DirectFacebookService()
 
-    private let userAgent = "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"
-    private let minimumRequestGap: TimeInterval = 0.45
+    /// فيسبوك يعيد الصفحة العامة كاملة لزائر Googlebot، بينما يعيد
+    /// المتصفح العادي إلى شاشة تسجيل الدخول.
+    private let botUserAgent = "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"
+    private let alternateUserAgent = "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)"
+    private let minimumRequestGap: TimeInterval = 0.35
     private let session: URLSession
     private var lastRequestAt = Date.distantPast
 
     private init() {
         let configuration = URLSessionConfiguration.default
-        configuration.timeoutIntervalForRequest = 25
-        configuration.timeoutIntervalForResource = 32
+        configuration.timeoutIntervalForRequest = 14
+        configuration.timeoutIntervalForResource = 20
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         configuration.httpShouldSetCookies = false
         configuration.httpCookieAcceptPolicy = .never
@@ -873,57 +1065,103 @@ final class DirectFacebookService {
             throw DirectFacebookError.invalidLink
         }
 
-        var candidates: [String] = []
-        if let url, !url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            candidates.append(url)
+        var attempts: [(url: String, agent: String)] = []
+        func add(_ value: String, agent: String = "") {
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return }
+            attempts.append((trimmed, agent))
         }
-        candidates.append(reference.inputURL.absoluteString)
-        if reference.needsResolution {
-            // لا نضيف عنواناً مشتقاً من كود المشاركة؛ الرابط الأصلي وحده
-            // هو ما يعرف فيسبوك كيف يحوّله إلى الصفحة.
-        } else if reference.isNumericID {
-            candidates.append("https://www.facebook.com/\(reference.handle)")
-        } else {
-            candidates.append("https://www.facebook.com/\(reference.handle)")
-            candidates.append("https://m.facebook.com/\(reference.handle)")
-            candidates.append("https://web.facebook.com/\(reference.handle)")
+
+        if let url, !url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            add(url)
+        }
+        add(reference.inputURL.absoluteString)
+
+        if !reference.needsResolution {
+            if reference.isNumericID {
+                add("https://www.facebook.com/profile.php?id=\(reference.handle)")
+                add("https://mbasic.facebook.com/profile.php?id=\(reference.handle)&v=timeline")
+            } else {
+                add("https://www.facebook.com/\(reference.handle)")
+                add("https://mbasic.facebook.com/\(reference.handle)?v=timeline")
+                add("https://m.facebook.com/\(reference.handle)")
+            }
+        } else if let url = URL(string: reference.inputURL.absoluteString) {
+            // روابط المشاركة تُحوَّل تلقائياً؛ نضيف نسخة mbasic لأنها
+            // تعيد التحويل إلى الصفحة العامة في حالات كثيرة.
+            var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+            if components?.host?.contains("facebook.com") == true {
+                components?.host = "mbasic.facebook.com"
+                if let alternate = components?.url?.absoluteString {
+                    add(alternate)
+                }
+            }
         }
 
         var seen = Set<String>()
         var lastError: DirectFacebookError = .blocked
-        for candidate in candidates {
-            guard let url = URL(string: candidate), seen.insert(url.absoluteString).inserted else { continue }
+        var sawBlockedPage = false
+
+        for attempt in attempts {
+            guard let target = URL(string: attempt.url),
+                  seen.insert(target.absoluteString + "|" + attempt.agent).inserted else { continue }
+            let agent = attempt.agent.isEmpty ? botUserAgent : attempt.agent
             do {
-                let page = try await load(url)
+                let page = try await load(target, userAgent: agent)
                 if page.html.contains("login_form") &&
                     !page.html.contains("timeline_list_feed_units") &&
                     !page.html.contains("og:title") {
+                    sawBlockedPage = true
                     throw DirectFacebookError.blocked
                 }
-                // روابط المشاركة وfb.me والروابط العربية تُحوَّل إلى
-                // الصفحة النهائية قبل قراءة الأرقام وتثبيت المعرّف.
-                var parseReference = reference
-                if reference.needsResolution,
-                   let canonical = FacebookPageParser.reference(from: page.finalURL.absoluteString),
-                   !canonical.needsResolution {
-                    parseReference = canonical
-                }
-                return try FacebookPageParser.parse(
-                    html: page.html,
-                    reference: parseReference,
-                    createdAt: createdAt
-                )
+                return try parse(page: page, reference: reference, createdAt: createdAt)
             } catch let error as DirectFacebookError {
                 lastError = error
+                switch error {
+                case .blocked, .badResponse: sawBlockedPage = true
+                case .invalidLink, .notFound: break
+                }
                 if !error.isTemporary { throw error }
             } catch {
                 lastError = .blocked
             }
         }
+
+        // محاولة أخيرة بوكيل زاحف مختلف على العنوان الأساسي، لأن فيسبوك
+        // يغيّر ما يعيده حسب بصمة الطلب.
+        if (sawBlockedPage || lastError.isTemporary),
+           let fallback = URL(string: reference.inputURL.absoluteString) {
+            if let page = try? await load(fallback, userAgent: alternateUserAgent) {
+                if let result = try? parse(page: page, reference: reference, createdAt: createdAt) {
+                    return result
+                }
+            }
+        }
+
         throw lastError
     }
 
-    private func load(_ url: URL) async throws -> (html: String, finalURL: URL) {
+    private func parse(
+        page: (html: String, finalURL: URL),
+        reference: FacebookPageReference,
+        createdAt: String?
+    ) throws -> DirectFacebookResult {
+        // روابط المشاركة وfb.me والروابط العربية تُحوَّل إلى الصفحة
+        // النهائية قبل قراءة الأرقام وتثبيت المعرّف.
+        var parseReference = reference
+        if reference.needsResolution,
+           let canonical = FacebookPageParser.reference(from: page.finalURL.absoluteString),
+           !canonical.needsResolution {
+            parseReference = canonical
+        }
+        return try FacebookPageParser.parse(
+            html: page.html,
+            reference: parseReference,
+            createdAt: createdAt
+        )
+    }
+
+    private func load(_ url: URL, userAgent: String) async throws -> (html: String, finalURL: URL) {
         let elapsed = Date().timeIntervalSince(lastRequestAt)
         if elapsed < minimumRequestGap {
             let delay = UInt64((minimumRequestGap - elapsed) * 1_000_000_000)
@@ -934,7 +1172,7 @@ final class DirectFacebookService {
         var request = URLRequest(
             url: url,
             cachePolicy: .reloadIgnoringLocalCacheData,
-            timeoutInterval: 25
+            timeoutInterval: 14
         )
         request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
         request.setValue("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", forHTTPHeaderField: "Accept")

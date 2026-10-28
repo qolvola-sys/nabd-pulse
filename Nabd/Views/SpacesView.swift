@@ -4,8 +4,9 @@ import UIKit
 #if MUTABAA
 // MARK: - الشريط العلوي للمساحات
 
-/// شريط علوي شبيه بالشريط السفلي: كل زر يمثّل مساحة مستقلة
-/// لها حساباتها وإحصاءاتها وترتيبها اليدوي.
+/// شريط علوي من سطرين: السطر الأول لاختيار المنصة (TikTok أو فيسبوك أو
+/// إنستغرام)، والسطر الثاني لاختيار المساحة مع «مساحة جديدة» و«إدارة
+/// المساحات». كل منصة تفتح شاشة حساباتها المستقلة.
 struct SpacesBar: View {
     @EnvironmentObject private var store: AppStore
     @Namespace private var namespace
@@ -14,6 +15,7 @@ struct SpacesBar: View {
     @State private var showNewSpace = false
     @State private var showFacebook = false
     @State private var showInstagram = false
+    @State private var selectedPlatform: AccountPlatform = .tiktok
     @State private var newSpaceName = ""
 
     private var facebookCount: Int {
@@ -24,89 +26,26 @@ struct SpacesBar: View {
         store.accounts.filter { $0.platform == .instagram }.count
     }
 
+    private func accentColor(for platform: AccountPlatform) -> Color {
+        switch platform {
+        case .tiktok: return Theme.cyan
+        case .facebook: return Theme.violet
+        case .instagram: return Theme.pink
+        }
+    }
+
+    private func count(for platform: AccountPlatform) -> Int {
+        switch platform {
+        case .tiktok: return store.accounts.filter { $0.platform == .tiktok }.count
+        case .facebook: return facebookCount
+        case .instagram: return instagramCount
+        }
+    }
+
     var body: some View {
-        HStack(spacing: 8) {
-            if store.spacesEnabled {
-                ScrollViewReader { proxy in
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 7) {
-                            ForEach(store.spaces) { space in
-                                spaceChip(space)
-                                    .id(space.id)
-                            }
-                        }
-                        .padding(.horizontal, 1)
-                    }
-                    .onChange(of: store.activeSpaceID) { value in
-                        withAnimation(.easeInOut(duration: 0.28)) {
-                            proxy.scrollTo(value, anchor: .center)
-                        }
-                    }
-                }
-            }
-
-            Button {
-                store.haptic(.selection)
-                showFacebook = true
-            } label: {
-                platformBarLabel(.facebook, count: facebookCount, accent: Theme.cyan)
-            }
-            .buttonStyle(PressableStyle(scale: 0.97))
-            .accessibilityIdentifier("open-facebook")
-
-            Button {
-                store.haptic(.selection)
-                showInstagram = true
-            } label: {
-                platformBarLabel(.instagram, count: instagramCount, accent: Theme.pink)
-            }
-            .buttonStyle(PressableStyle(scale: 0.97))
-            .accessibilityIdentifier("open-instagram")
-
-            if store.spacesEnabled {
-                Menu {
-                    Button {
-                        newSpaceName = ""
-                        showNewSpace = true
-                    } label: {
-                        Label("مساحة جديدة", systemImage: "plus.circle")
-                    }
-                    Button {
-                        showManager = true
-                    } label: {
-                        Label("إدارة المساحات", systemImage: "slider.horizontal.3")
-                    }
-                } label: {
-                    Image(systemName: "ellipsis")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundColor(Theme.textSecondary)
-                        .frame(width: 38, height: 38)
-                        .background(Circle().fill(Theme.surface))
-                        .overlay(Circle().strokeBorder(Theme.border, lineWidth: 1))
-                }
-                .buttonStyle(PressableStyle())
-            } else {
-                Spacer(minLength: 0)
-
-                HStack(spacing: 5) {
-                    Image(systemName: store.isDemo ? "flask.fill" : "server.rack")
-                        .font(.system(size: 9.5, weight: .bold))
-                    Text(store.isDemo ? "تجريبي" : "خادم")
-                        .font(.system(size: 9.5, weight: .bold))
-                }
-                .foregroundColor(store.isDemo ? Theme.gold : Theme.cyan)
-                .padding(.horizontal, 8)
-                .frame(height: 38)
-                .background(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(Theme.surface)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .strokeBorder(Theme.border, lineWidth: 1)
-                )
-                .accessibilityLabel(store.isDemo ? "الوضع التجريبي" : "وضع الخادم")
-            }
+        VStack(spacing: 6) {
+            platformRow
+            spaceRow
         }
         .padding(6)
         .background(
@@ -137,14 +76,14 @@ struct SpacesBar: View {
             SpacesManagerView()
                 .environmentObject(store)
         }
-        .fullScreenCover(isPresented: $showFacebook) {
+        .fullScreenCover(isPresented: $showFacebook, onDismiss: { selectedPlatform = .tiktok }) {
             ZStack {
                 AppBackground()
                 AccountsView(platform: .facebook)
                     .environmentObject(store)
             }
         }
-        .fullScreenCover(isPresented: $showInstagram) {
+        .fullScreenCover(isPresented: $showInstagram, onDismiss: { selectedPlatform = .tiktok }) {
             ZStack {
                 AppBackground()
                 AccountsView(platform: .instagram)
@@ -164,32 +103,143 @@ struct SpacesBar: View {
         }
     }
 
-    private func platformBarLabel(_ platform: AccountPlatform, count: Int, accent: Color) -> some View {
+    // MARK: - السطر الأول: المنصة
+
+    private var platformRow: some View {
         HStack(spacing: 5) {
-            Image(systemName: platform.icon)
-                .font(.system(size: 11, weight: .bold))
-            Text(platform.title)
-                .font(.system(size: 11.5, weight: .bold))
-            if count > 0 {
-                Text(Num.full(Int64(count)))
-                    .font(.system(size: 8.5, weight: .bold, design: .rounded))
-                    .foregroundColor(accent)
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 1)
-                    .background(Capsule().fill(accent.opacity(0.14)))
+            ForEach(AccountPlatform.allCases) { platform in
+                Button {
+                    choose(platform)
+                } label: {
+                    platformSegment(platform)
+                }
+                .buttonStyle(PressableStyle(scale: 0.97))
+                .accessibilityIdentifier("open-\(platform.rawValue)")
             }
         }
-        .foregroundColor(accent)
-        .padding(.horizontal, 9)
-        .frame(height: 38)
+    }
+
+    private func choose(_ platform: AccountPlatform) {
+        store.haptic(.selection)
+        switch platform {
+        case .tiktok:
+            selectedPlatform = .tiktok
+        case .facebook:
+            selectedPlatform = .facebook
+            showFacebook = true
+        case .instagram:
+            selectedPlatform = .instagram
+            showInstagram = true
+        }
+    }
+
+    private func platformSegment(_ platform: AccountPlatform) -> some View {
+        let accent = accentColor(for: platform)
+        let selected = platform == selectedPlatform
+        let value = count(for: platform)
+
+        return HStack(spacing: 4) {
+            Image(systemName: platform.icon)
+                .font(.system(size: 10.5, weight: .bold))
+            Text(platform.title)
+                .font(.system(size: 11, weight: .bold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+            if value > 0 {
+                Text(Num.full(Int64(value)))
+                    .font(.system(size: 8, weight: .bold, design: .rounded))
+                    .foregroundColor(selected ? accent : Theme.textTertiary)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .background(Capsule().fill(accent.opacity(selected ? 0.18 : 0.08)))
+            }
+        }
+        .foregroundColor(selected ? accent : Theme.textSecondary)
+        .frame(maxWidth: .infinity)
+        .frame(height: 36)
         .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(accent.opacity(0.08))
+            RoundedRectangle(cornerRadius: 13, style: .continuous)
+                .fill(selected ? accent.opacity(0.10) : Theme.bgSoft.opacity(0.55))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(accent.opacity(0.24), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 13, style: .continuous)
+                .strokeBorder(selected ? accent.opacity(0.26) : Theme.borderSoft.opacity(0.6), lineWidth: 1)
         )
+    }
+
+    // MARK: - السطر الثاني: المساحة
+
+    private var spaceRow: some View {
+        HStack(spacing: 6) {
+            if store.spacesEnabled {
+                ScrollViewReader { proxy in
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 6) {
+                            ForEach(store.spaces) { space in
+                                spaceChip(space)
+                                    .id(space.id)
+                            }
+                        }
+                        .padding(.horizontal, 1)
+                    }
+                    .onChange(of: store.activeSpaceID) { value in
+                        withAnimation(.easeInOut(duration: 0.28)) {
+                            proxy.scrollTo(value, anchor: .center)
+                        }
+                    }
+                }
+
+                Menu {
+                    Button {
+                        newSpaceName = ""
+                        showNewSpace = true
+                    } label: {
+                        Label("مساحة جديدة", systemImage: "plus.circle")
+                    }
+                    Button {
+                        showManager = true
+                    } label: {
+                        Label("إدارة المساحات", systemImage: "slider.horizontal.3")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundColor(Theme.textSecondary)
+                        .frame(width: 38, height: 34)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .fill(Theme.bgSoft.opacity(0.7))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .strokeBorder(Theme.borderSoft.opacity(0.7), lineWidth: 1)
+                        )
+                }
+                .buttonStyle(PressableStyle())
+                .accessibilityLabel("إدارة المساحات")
+            } else {
+                Spacer(minLength: 0)
+
+                HStack(spacing: 5) {
+                    Image(systemName: store.isDemo ? "flask.fill" : "server.rack")
+                        .font(.system(size: 9.5, weight: .bold))
+                    Text(store.isDemo ? "تجريبي" : "خادم")
+                        .font(.system(size: 9.5, weight: .bold))
+                }
+                .foregroundColor(store.isDemo ? Theme.gold : Theme.cyan)
+                .padding(.horizontal, 8)
+                .frame(height: 34)
+                .background(
+                    RoundedRectangle(cornerRadius: 13, style: .continuous)
+                        .fill(Theme.bgSoft.opacity(0.55))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 13, style: .continuous)
+                        .strokeBorder(Theme.borderSoft.opacity(0.65), lineWidth: 1)
+                )
+                .accessibilityLabel(store.isDemo ? "الوضع التجريبي" : "وضع الخادم")
+            }
+        }
     }
 
     private func spaceChip(_ space: AccountSpace) -> some View {
@@ -208,7 +258,7 @@ struct SpacesBar: View {
                     .shadow(color: accent.opacity(0.8), radius: 4)
 
                 Text(space.name)
-                    .font(.system(size: 12.5, weight: .semibold))
+                    .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(active ? Theme.text : Theme.textSecondary)
                     .lineLimit(1)
 
@@ -222,18 +272,18 @@ struct SpacesBar: View {
                     )
             }
             .padding(.horizontal, 10)
-            .frame(height: 38)
+            .frame(height: 34)
             .background {
                 if active {
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
                         .fill(Theme.cyan.opacity(0.10))
                         .overlay(
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
                                 .strokeBorder(Theme.cyan.opacity(0.24), lineWidth: 1)
                         )
                         .matchedGeometryEffect(id: "space-pill", in: namespace)
                 } else {
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
                         .fill(Color.clear)
                 }
             }

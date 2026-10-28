@@ -750,27 +750,39 @@ struct AccountsView: View {
     }
     #endif
 
+    /// لا توجد منشورات مقروءة لأي حساب في هذه المنصة بعد، فالأرقام
+    /// المعروضة ستكون أصفاراً غير حقيقية. نعرض «—» بدلاً منها.
+    private var platformNumbersUnavailable: Bool {
+        platform != .tiktok
+            && platformSummary.loadedVideos == 0
+            && platformAccounts.contains { $0.status == "pending" }
+    }
+
     private var posts24hText: String {
-        platformSummary.dailyComplete
+        if platformNumbersUnavailable { return "—" }
+        return platformSummary.dailyComplete
             ? Num.full(Int64(platformSummary.posts24h))
             : Num.atLeast(Int64(platformSummary.posts24h))
     }
 
     private var views24hText: String {
-        Num.maybeApprox(
+        if platformNumbersUnavailable { return "—" }
+        return Num.maybeApprox(
             platformSummary.views24h,
             exact: platformSummary.dailyComplete && platformSummary.dailyViewsExact
         )
     }
 
     private var weeklyViewsText: String {
-        Num.maybeApprox(
+        if platformNumbersUnavailable { return "—" }
+        return Num.maybeApprox(
             platformSummary.weeklyViews,
             exact: platformSummary.weeklyComplete && platformSummary.weeklyViewsExact
         )
     }
 
     private var weeklyScoreText: String {
+        if platformNumbersUnavailable { return "—" }
         let exact = platformSummary.weeklyComplete && platformSummary.weeklyViewsExact
         return Num.score(platformSummary.weeklyScore, exact: exact) + "%"
     }
@@ -924,13 +936,17 @@ struct AccountsView: View {
             HStack(spacing: 0) {
                 stripItem(
                     title: "إعجابات ٢٤س",
-                    value: Num.maybeApprox(platformSummary.likes24h, exact: platformSummary.dailyComplete),
+                    value: platformNumbersUnavailable
+                        ? "—"
+                        : Num.maybeApprox(platformSummary.likes24h, exact: platformSummary.dailyComplete),
                     tint: Theme.pink
                 )
                 Rectangle().fill(Theme.borderSoft).frame(width: 1, height: 24)
                 stripItem(
                     title: "إعجابات ٧ أيام",
-                    value: Num.maybeApprox(platformSummary.likes7d, exact: platformSummary.weeklyComplete),
+                    value: platformNumbersUnavailable
+                        ? "—"
+                        : Num.maybeApprox(platformSummary.likes7d, exact: platformSummary.weeklyComplete),
                     tint: Theme.violet
                 )
             }
@@ -1062,20 +1078,29 @@ struct AccountRow: View {
         Theme.chartPalette[account.paletteIndex % Theme.chartPalette.count]
     }
 
+    /// الأرقام غير متاحة فعلاً عندما لم تُقرأ أي منشورات بعد.
+    private var numbersUnavailable: Bool {
+        account.status == "pending" && account.fetchedVideos == 0
+    }
+
     private var views24hText: String {
-        Num.maybeApprox(account.views24h, exact: account.dailyComplete && account.dailyViewsExact)
+        if numbersUnavailable { return "—" }
+        return Num.maybeApprox(account.views24h, exact: account.dailyComplete && account.dailyViewsExact)
     }
 
     private var posts24hText: String {
-        account.dailyComplete ? Num.full(Int64(account.posts24h)) : Num.atLeast(Int64(account.posts24h))
+        if numbersUnavailable { return "—" }
+        return account.dailyComplete ? Num.full(Int64(account.posts24h)) : Num.atLeast(Int64(account.posts24h))
     }
 
     private var avg24hText: String {
-        Num.maybeApprox(account.avgViews24h, exact: account.dailyComplete && account.dailyViewsExact)
+        if numbersUnavailable { return "—" }
+        return Num.maybeApprox(account.avgViews24h, exact: account.dailyComplete && account.dailyViewsExact)
     }
 
     private var weeklyViewsText: String {
-        Num.maybeApprox(account.weeklyViews, exact: account.weeklyScoreExact)
+        if numbersUnavailable { return "—" }
+        return Num.maybeApprox(account.weeklyViews, exact: account.weeklyScoreExact)
     }
 
     var body: some View {
@@ -1103,6 +1128,14 @@ struct AccountRow: View {
                             .font(.system(size: 11))
                             .foregroundColor(Theme.textTertiary)
                             .lineLimit(1)
+                    }
+                    if numbersUnavailable,
+                       let reason = account.error,
+                       !reason.isEmpty {
+                        Text(reason)
+                            .font(.system(size: 8.5))
+                            .foregroundColor(Theme.gold)
+                            .lineLimit(2)
                     }
                 }
 
@@ -1155,7 +1188,7 @@ struct AccountRow: View {
                     Text("إعجابات ٢٤س")
                         .font(.system(size: 9.5))
                         .foregroundColor(Theme.textTertiary)
-                    Text(Num.maybeApprox(account.likes24h, exact: account.dailyComplete))
+                    Text(numbersUnavailable ? "—" : Num.maybeApprox(account.likes24h, exact: account.dailyComplete))
                         .font(.system(size: 11, weight: .bold, design: .rounded))
                         .foregroundColor(Theme.textSecondary)
                         .lineLimit(1)
@@ -1165,7 +1198,7 @@ struct AccountRow: View {
                     Text("٧ أيام")
                         .font(.system(size: 9.5))
                         .foregroundColor(Theme.textTertiary)
-                    Text(Num.maybeApprox(account.likes7d, exact: account.weeklyComplete))
+                    Text(numbersUnavailable ? "—" : Num.maybeApprox(account.likes7d, exact: account.weeklyComplete))
                         .font(.system(size: 11, weight: .bold, design: .rounded))
                         .foregroundColor(Theme.textSecondary)
                         .lineLimit(1)

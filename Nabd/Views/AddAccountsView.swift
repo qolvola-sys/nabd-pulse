@@ -37,6 +37,13 @@ struct AddAccountsView: View {
         Set(
             store.accounts
                 .filter { $0.platform == platform }
+                .filter { account in
+                    // الحساب الذي لم تُقرأ أرقامه بعد لا يُعدّ مضافاً، حتى
+                    // يستطيع المستخدم إعادة المحاولة بدل رسالة «مضاف مسبقاً».
+                    let resolved = account.status == "public" || account.status == "ok"
+                    let hasNumbers = account.fetchedVideos > 0 || account.followers > 0
+                    return resolved && hasNumbers
+                }
                 .map { $0.handle.lowercased() }
         )
     }
@@ -413,7 +420,9 @@ struct AddAccountsView: View {
                         ? successSentence
                         : (platform == .facebook
                            ? "أُضيفت الصفحة، لكن تعذّرت قراءة أرقامها الآن. اضغط «مزامنة» لإعادة المحاولة."
-                           : "أُضيفت الحسابات وستُحدَّث أرقامها تلقائياً عند توفر اتصال \(platformName).")))
+                           : (platform == .instagram
+                              ? "أُضيف الحساب، لكن إنستغرام لم يسمح بقراءة المنشورات الآن. اضغط «مزامنة» لإعادة المحاولة لاحقاً."
+                              : "أُضيفت الحسابات وستُحدَّث أرقامها تلقائياً عند توفر اتصال \(platformName)."))))
                     .font(.system(size: 11))
                     .foregroundColor(Theme.textSecondary)
                     .lineSpacing(3)
@@ -430,6 +439,14 @@ struct AddAccountsView: View {
                                 Text(account.handleLabel)
                                     .font(.system(size: 9.5))
                                     .foregroundColor(Theme.textTertiary)
+                                if account.status == "pending",
+                                   let reason = account.error,
+                                   !reason.isEmpty {
+                                    Text(reason)
+                                        .font(.system(size: 8.5))
+                                        .foregroundColor(Theme.gold)
+                                        .lineLimit(2)
+                                }
                             }
                             Spacer()
                             if store.useServer {
@@ -446,10 +463,10 @@ struct AddAccountsView: View {
                                 .disabled(store.connectingAccountID != nil)
                             } else if account.status == "pending" {
                                 VStack(alignment: .trailing, spacing: 1) {
-                                    Text("بانتظار التحديث")
-                                        .font(.system(size: 10.5, weight: .bold))
+                                    Text("—")
+                                        .font(.system(size: 12, weight: .bold, design: .rounded))
                                         .foregroundColor(Theme.gold)
-                                    Text("سيُحدَّث تلقائياً")
+                                    Text("الأرقام غير متاحة الآن")
                                         .font(.system(size: 8.5))
                                         .foregroundColor(Theme.textTertiary)
                                 }
@@ -621,9 +638,12 @@ struct AddAccountsView: View {
         let response = await store.add(links: links, platform: platform)
         isSubmitting = false
         if let response {
+            let hasPending = response.created.contains { $0.status == "pending" || $0.status == "error" }
             withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
                 result = response
-                if !keepText { text = "" }
+                // نُبقي الروابط في الحقل إذا بقيت أرقامها غير مقروءة حتى
+                // يستطيع المستخدم إعادة المحاولة مباشرة.
+                if !keepText && !hasPending { text = "" }
             }
         } else if platform == .facebook {
             errorText = "تعذّرت إضافة صفحات فيسبوك. تأكد أن الصفحة عامة وأن الرابط يبدأ بـ facebook.com، ثم أعد المحاولة."

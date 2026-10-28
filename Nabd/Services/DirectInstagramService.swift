@@ -183,21 +183,31 @@ final class DirectInstagramService {
     private let userAgent =
         "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 " +
         "(KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"
+    /// واجهة الويب العامة تتعامل أفضل مع متصفح سطح مكتب حديث.
+    private let desktopUserAgent =
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+        "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
     private let appID = "936619743392459"
     private let daySeconds = 24 * 60 * 60
     private let weekSeconds = 7 * 24 * 60 * 60
     private let minimumRequestGap: TimeInterval = 0.5
 
     private let session: URLSession
+    private let cookieStorage = HTTPCookieStorage()
     private var lastRequestAt = Date.distantPast
+    private var didWarmUp = false
+    private var csrfToken: String?
 
     private init() {
         let configuration = URLSessionConfiguration.default
-        configuration.timeoutIntervalForRequest = 25
-        configuration.timeoutIntervalForResource = 32
+        configuration.timeoutIntervalForRequest = 20
+        configuration.timeoutIntervalForResource = 28
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
-        configuration.httpShouldSetCookies = false
-        configuration.httpCookieAcceptPolicy = .never
+        // كوكيز الجلسة (csrftoken وmid) ترفع فرصة قبول واجهة الويب
+        // بدل إرجاع 429 فوراً.
+        configuration.httpCookieStorage = cookieStorage
+        configuration.httpShouldSetCookies = true
+        configuration.httpCookieAcceptPolicy = .always
         configuration.waitsForConnectivity = false
         session = URLSession(configuration: configuration)
     }
@@ -215,17 +225,37 @@ final class DirectInstagramService {
             }
         }
 
+        // ٠) تهيئة كوكيز الجلسة العامة لتحسين قبول واجهة الويب.
+        await warmUpIfNeeded()
+
         // ١) واجهة الويب العامة: أدق أرقام وأحدث المنشورات.
         if let apiResult = try? await fetchAPI(reference: reference, createdAt: createdAt) {
             return apiResult
         }
 
-        // ٢) صفحة الحساب ووسوم og: أرقام الملف فقط.
+        // ٢) صفحة الحساب وبياناتها المدمجة، ثم وسوم og كحد أدنى.
         if let htmlResult = try? await fetchHTML(reference: reference, createdAt: createdAt) {
             return htmlResult
         }
 
         throw DirectInstagramError.blocked
+    }
+
+    // MARK: - تهيئة الجلسة
+
+    private func warmUpIfNeeded() async {
+        guard !didWarmUp else { return }
+        didWarmUp = true
+        guard let url = URL(string: "https://www.instagram.com/") else { return }
+
+        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
+        request.setValue(desktopUserAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", forHTTPHeaderField: "Accept")
+        request.setValue("en-US,en;q=0.9,ar;q=0.8", forHTTPHeaderField: "Accept-Language")
+
+        if let (data, _) = try? await send(request), data.count > 500 {
+            csrfToken = cookieStorage.cookies?.first(where: { $0.name == "csrftoken" })?.value
+        }
     }
 
     // MARK: - حل روابط المشاركة
@@ -263,37 +293,71 @@ final class DirectInstagramService {
     // MARK: - واجهة الويب
 
     private func fetchAPI(reference: InstagramProfileReference, createdAt: String?) async throws -> DirectInstagramResult {
-        guard let url = URL(string:
-            "https://www.instagram.com/api/v1/users/web_profile_info/?username=\(reference.handle)"
-        ) else { throw DirectInstagramError.invalidLink }
+        let hosts = ["https://www.instagram.com", "https://i.instagram.com"]
+        var lastError: DirectInstagramError = .blocked
 
-        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 25)
-        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
-        request.setValue(appID, forHTTPHeaderField: "x-ig-app-id")
-        request.setValue("*/*", forHTTPHeaderField: "Accept")
-        request.setValue("XMLHttpRequest", forHTTPHeaderField: "X-Requested-With")
-        request.setValue("https://www.instagram.com/\(reference.handle)/", forHTTPHeaderField: "Referer")
-        request.setValue("en-US,en;q=0.9,ar;q=0.8", forHTTPHeaderField: "Accept-Language")
-        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+        for (index, host) in hosts.enumerated() {
+            guard let url = URL(string:
+                "\(host)/api/v1/users/web_profile_info/?username=\(reference.handle)"
+            ) else { throw DirectInstagramError.invalidLink }
 
-        let (data, response) = try await send(request)
-        guard let http = response as? HTTPURLResponse else { throw DirectInstagramError.badResponse }
-        if http.statusCode == 404 { throw DirectInstagramError.notFound }
-        guard (200..<300).contains(http.statusCode), data.count > 80 else {
-            throw DirectInstagramError.blocked
+            var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 20)
+            request.setValue(index == 0 ? desktopUserAgent : userAgent, forHTTPHeaderField: "User-Agent")
+            request.setValue(appID, forHTTPHeaderField: "x-ig-app-id")
+            request.setValue("129477", forHTTPHeaderField: "x-asbd-id")
+            request.setValue("0", forHTTPHeaderField: "x-ig-www-claim")
+            request.setValue("*/*", forHTTPHeaderField: "Accept")
+            request.setValue("XMLHttpRequest", forHTTPHeaderField: "X-Requested-With")
+            request.setValue("https://www.instagram.com/\(reference.handle)/", forHTTPHeaderField: "Referer")
+            request.setValue("https://www.instagram.com", forHTTPHeaderField: "Origin")
+            request.setValue("en-US,en;q=0.9,ar;q=0.8", forHTTPHeaderField: "Accept-Language")
+            request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+            request.setValue("same-origin", forHTTPHeaderField: "Sec-Fetch-Site")
+            request.setValue("cors", forHTTPHeaderField: "Sec-Fetch-Mode")
+            request.setValue("empty", forHTTPHeaderField: "Sec-Fetch-Dest")
+            if let csrfToken, !csrfToken.isEmpty {
+                request.setValue(csrfToken, forHTTPHeaderField: "x-csrftoken")
+            }
+
+            do {
+                let (data, response) = try await send(request)
+                guard let http = response as? HTTPURLResponse else {
+                    lastError = .badResponse
+                    continue
+                }
+                if http.statusCode == 404 { throw DirectInstagramError.notFound }
+                if http.statusCode == 429 {
+                    lastError = .blocked
+                    // انتظار قصير ثم إعادة المحاولة على المضيف التالي.
+                    try? await Task.sleep(nanoseconds: 1_200_000_000)
+                    continue
+                }
+                guard (200..<300).contains(http.statusCode), data.count > 80 else {
+                    lastError = .blocked
+                    continue
+                }
+                guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let dataObject = root["data"] as? [String: Any],
+                      let user = dataObject["user"] as? [String: Any],
+                      !(stringValue(user["username"]) ?? "").isEmpty else {
+                    lastError = .notFound
+                    continue
+                }
+                return try makeResult(
+                    user: user,
+                    reference: reference,
+                    createdAt: createdAt,
+                    profileExact: true
+                )
+            } catch let error as DirectInstagramError {
+                lastError = error
+                if !error.isTemporary { throw error }
+            } catch {
+                lastError = .blocked
+            }
         }
-        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let dataObject = root["data"] as? [String: Any],
-              let user = dataObject["user"] as? [String: Any],
-              !(stringValue(user["username"]) ?? "").isEmpty else {
-            throw DirectInstagramError.notFound
-        }
-        return try makeResult(
-            user: user,
-            reference: reference,
-            createdAt: createdAt,
-            profileExact: true
-        )
+
+        throw lastError
     }
 
     private func send(_ request: URLRequest) async throws -> (Data, URLResponse) {
@@ -321,20 +385,71 @@ final class DirectInstagramService {
             throw DirectInstagramError.notFound
         }
 
-        if let user = embeddedUser(in: html) {
-            return try makeResult(
-                user: user,
-                reference: reference,
-                createdAt: createdAt,
-                profileExact: true
-            )
-        }
-
+        let objects = jsonObjects(in: html)
         let description = metaContent(in: html, property: "og:description") ?? ""
         let title = metaContent(in: html, property: "og:title") ?? ""
         let image = metaContent(in: html, property: "og:image") ?? ""
         let profileURL = metaContent(in: html, property: "og:url") ?? reference.canonicalURL
 
+        // أ) بيانات JSON كاملة (الملف + المنشورات) إن أرسلها إنستغرام للزائر.
+        var user = embeddedUser(in: html)
+        if user == nil {
+            for object in objects {
+                if let found = findUser(in: object) { user = found; break }
+            }
+        }
+
+        var nodes: [[String: Any]] = []
+        for object in objects {
+            collectMediaNodes(in: object, into: &nodes)
+            if nodes.count >= 40 { break }
+        }
+        if nodes.isEmpty {
+            nodes = mediaNodesFromScriptJSON(in: html)
+        }
+
+        if let user {
+            let posts = buildVideos(from: nodes)
+            let result = try makeResult(
+                user: user,
+                reference: reference,
+                createdAt: createdAt,
+                profileExact: true,
+                postsOverride: posts.isEmpty ? nil : posts
+            )
+            if !result.videos.isEmpty || result.account.followers > 0 {
+                return result
+            }
+        }
+
+        // ب) منشورات JSON بلا كائن ملف كامل: نستخرج اسم الحساب من المنشور.
+        if !nodes.isEmpty {
+            let handle = usernameFromNodes(nodes) ?? referencedHandle(from: title) ?? reference.handle
+            let followers = humanCount(in: description, markers: ["followers", "follower", "متابع"])
+            let following = humanCount(in: description, markers: ["following", "يتابع"])
+            let postsCount = humanCount(in: description, markers: ["posts", "post", "منشور"])
+            let displayName = cleanTitle(title, handle: handle)
+            let synthetic: [String: Any] = [
+                "username": handle,
+                "full_name": displayName,
+                "profile_pic_url": image,
+                "is_verified": title.contains("Verified"),
+                "edge_followed_by": ["count": followers],
+                "edge_follow": ["count": following],
+                "edge_owner_to_timeline_media": ["count": postsCount, "edges": []],
+            ]
+            return try makeResult(
+                user: synthetic,
+                reference: reference,
+                createdAt: createdAt,
+                profileExact: false,
+                postsOverride: buildVideos(from: nodes),
+                postsCountOverride: postsCount > 0 ? Int(postsCount) : nil
+            )
+        }
+
+        // ج) وسوم og فقط: نضيف الحساب ونعلّمه بوضوح أن الأرقام لم تُقرأ،
+        // بدل عرض صفر كأنه رقم حقيقي.
         let handle = referencedHandle(from: title) ?? reference.handle
         guard !description.isEmpty || !title.isEmpty else {
             throw DirectInstagramError.blocked
@@ -357,7 +472,7 @@ final class DirectInstagramService {
             following: following,
             likes: 0,
             posts: Int(posts),
-            postsCountExact: posts > 0,
+            postsCountExact: false,
             views: 0,
             videoLikes: 0,
             comments: 0,
@@ -380,8 +495,8 @@ final class DirectInstagramService {
             weeklyComplete: false,
             weeklyViewsExact: false,
             allPostsLoaded: false,
-            status: "public",
-            error: nil,
+            status: "pending",
+            error: "إنستغرام لم يسمح بقراءة المنشورات الآن؛ ستُحدَّث الأرقام تلقائياً.",
             lastSyncedAt: ISO8601DateFormatter.nabd.string(from: Date()),
             createdAt: createdAt ?? ISO8601DateFormatter.nabd.string(from: Date())
         )
@@ -420,7 +535,9 @@ final class DirectInstagramService {
         user: [String: Any],
         reference: InstagramProfileReference,
         createdAt: String?,
-        profileExact: Bool
+        profileExact: Bool,
+        postsOverride: [VideoItem]? = nil,
+        postsCountOverride: Int? = nil
     ) throws -> DirectInstagramResult {
         let handle = (stringValue(user["username"]) ?? reference.handle).lowercased()
         guard !handle.isEmpty else { throw DirectInstagramError.notFound }
@@ -446,66 +563,23 @@ final class DirectInstagramService {
         ) ?? 0
 
         let media = user["edge_owner_to_timeline_media"] as? [String: Any] ?? [:]
-        let totalPosts = firstInt(media["count"]) ?? 0
+        let totalPosts = postsCountOverride ?? firstInt(media["count"]) ?? 0
         let edges = media["edges"] as? [[String: Any]] ?? []
 
-        var seen = Set<String>()
-        var videos: [VideoItem] = []
-        for edge in edges {
-            guard let node = edge["node"] as? [String: Any] else { continue }
-            let shortcode = stringValue(node["shortcode"]) ?? ""
-            let id = stringValue(node["id"]) ?? shortcode
-            guard !id.isEmpty, !seen.contains(id) else { continue }
-            seen.insert(id)
-
-            let created = firstInt(node["taken_at_timestamp"]) ?? 0
-            let isVideo = firstBool(node["is_video"], node["isVideo"])
-            let views = isVideo
-                ? (firstInt64(node["video_view_count"], node["video_play_count"], node["play_count"]) ?? 0)
-                : 0
-            let likes = firstInt64(
-                (node["edge_liked_by"] as? [String: Any])?["count"],
-                (node["edge_media_preview_like"] as? [String: Any])?["count"],
-                node["like_count"]
-            ) ?? 0
-            let comments = firstInt64(
-                (node["edge_media_to_comment"] as? [String: Any])?["count"],
-                node["comment_count"]
-            ) ?? 0
-            let caption = firstString(
-                captionText(in: node),
-                node["caption"]
-            ) ?? ""
-            let cover = firstString(
-                node["thumbnail_src"],
-                node["display_url"],
-                (node["thumbnail_resources"] as? [[String: Any]])?.last?["src"]
-            )
-            let shareURL: String
-            if shortcode.isEmpty {
-                shareURL = "https://www.instagram.com/\(handle)/"
-            } else if isVideo {
-                shareURL = "https://www.instagram.com/reel/\(shortcode)/"
-            } else {
-                shareURL = "https://www.instagram.com/p/\(shortcode)/"
+        let videos: [VideoItem]
+        if let postsOverride {
+            videos = postsOverride.sorted { $0.createTime > $1.createTime }
+        } else {
+            var seen = Set<String>()
+            var built: [VideoItem] = []
+            for edge in edges {
+                guard let node = edge["node"] as? [String: Any] else { continue }
+                guard let item = videoItem(from: node, handle: handle) else { continue }
+                guard seen.insert(item.id).inserted else { continue }
+                built.append(item)
             }
-
-            videos.append(VideoItem(
-                id: id,
-                title: caption,
-                coverUrl: cover,
-                shareUrl: shareURL,
-                duration: 0,
-                createTime: created,
-                views: views,
-                likes: likes,
-                comments: comments,
-                shares: 0,
-                // إنستغرام ينشر مشاهدات الفيديو فقط؛ الصور لا تكشف مشاهدات.
-                viewsExact: isVideo
-            ))
+            videos = built.sorted { $0.createTime > $1.createTime }
         }
-        videos.sort { $0.createTime > $1.createTime }
 
         let now = Int(Date().timeIntervalSince1970)
         let cutoff24h = now - daySeconds
@@ -572,12 +646,77 @@ final class DirectInstagramService {
             weeklyComplete: weeklyComplete,
             weeklyViewsExact: weeklyViewsExact,
             allPostsLoaded: allPostsLoaded,
-            status: "public",
-            error: nil,
+            status: videos.isEmpty && totalPosts == 0 ? "pending" : "public",
+            error: videos.isEmpty && totalPosts == 0
+                ? "لم تُقرأ منشورات الحساب بعد؛ ستُحدَّث الأرقام تلقائياً."
+                : nil,
             lastSyncedAt: ISO8601DateFormatter.nabd.string(from: Date()),
             createdAt: createdAt ?? ISO8601DateFormatter.nabd.string(from: Date())
         )
         return DirectInstagramResult(account: account, videos: videos)
+    }
+
+    private func videoItem(from node: [String: Any], handle: String) -> VideoItem? {
+        let shortcode = stringValue(node["shortcode"]) ?? ""
+        let id = stringValue(node["id"]) ?? shortcode
+        guard !id.isEmpty else { return nil }
+
+        let created = firstInt(node["taken_at_timestamp"], node["taken_at"], node["takenAt"]) ?? 0
+        let productType = (stringValue(node["product_type"]) ?? "").lowercased()
+        let mediaType = firstInt(node["media_type"]) ?? 0
+        let isVideo = firstBool(node["is_video"], node["isVideo"])
+            || productType == "clips"
+            || mediaType == 2
+        let viewsValue = firstInt64(
+            node["video_view_count"],
+            node["video_play_count"],
+            node["play_count"],
+            node["view_count"]
+        )
+        let views = isVideo ? (viewsValue ?? 0) : 0
+        let likes = firstInt64(
+            (node["edge_liked_by"] as? [String: Any])?["count"],
+            (node["edge_media_preview_like"] as? [String: Any])?["count"],
+            node["like_count"],
+            node["likeCount"]
+        ) ?? 0
+        let comments = firstInt64(
+            (node["edge_media_to_comment"] as? [String: Any])?["count"],
+            node["comment_count"],
+            node["commentCount"]
+        ) ?? 0
+        let caption = firstString(
+            captionText(in: node),
+            node["caption"]
+        ) ?? ""
+        let cover = firstString(
+            node["thumbnail_src"],
+            node["display_url"],
+            (node["thumbnail_resources"] as? [[String: Any]])?.last?["src"]
+        )
+        let shareURL: String
+        if shortcode.isEmpty {
+            shareURL = "https://www.instagram.com/\(handle)/"
+        } else if isVideo {
+            shareURL = "https://www.instagram.com/reel/\(shortcode)/"
+        } else {
+            shareURL = "https://www.instagram.com/p/\(shortcode)/"
+        }
+
+        return VideoItem(
+            id: id,
+            title: caption,
+            coverUrl: cover,
+            shareUrl: shareURL,
+            duration: firstInt(node["video_duration"], node["videoDuration"]) ?? 0,
+            createTime: created,
+            views: views,
+            likes: likes,
+            comments: comments,
+            shares: 0,
+            // إنستغرام ينشر مشاهدات الفيديو فقط؛ الصور لا تكشف مشاهدات.
+            viewsExact: isVideo
+        )
     }
 
     /// نافذة ٢٤ ساعة/٧ أيام مكتملة إذا كانت المنشورات المحمّلة تغطيها،
@@ -595,6 +734,153 @@ final class DirectInstagramService {
     }
 
     // MARK: - استخراج JSON من الصفحة
+
+    /// يجمع كل كتل JSON المدمجة في الصفحة: وسوم application/json،
+    /// وwindow._sharedData، وكائنات contextJSON التي تعيدها صفحات
+    /// التضمين. إنستغرام يغيّر مكان البيانات بين نسخة وأخرى، لذا نقرأ
+    /// من كل الأشكال بدل الاعتماد على شكل واحد.
+    private func jsonObjects(in html: String) -> [Any] {
+        var objects: [Any] = []
+
+        let scriptPattern = #"<script[^>]*type=["']application/json["'][^>]*>([\s\S]*?)</script>"#
+        if let regex = try? NSRegularExpression(pattern: scriptPattern, options: [.caseInsensitive]) {
+            let range = NSRange(html.startIndex..., in: html)
+            for match in regex.matches(in: html, range: range) {
+                guard match.numberOfRanges > 1,
+                      let bodyRange = Range(match.range(at: 1), in: html) else { continue }
+                appendJSON(String(html[bodyRange]), into: &objects)
+            }
+        }
+
+        let inlinePatterns = [
+            #"window\._sharedData\s*=\s*(\{[\s\S]*?\});"#,
+            #"window\.__additionalDataLoaded\([^,]*,\s*(\{[\s\S]*?\})\);"#,
+        ]
+        for pattern in inlinePatterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+            let range = NSRange(html.startIndex..., in: html)
+            for match in regex.matches(in: html, range: range) {
+                guard match.numberOfRanges > 1,
+                      let bodyRange = Range(match.range(at: 1), in: html) else { continue }
+                appendJSON(String(html[bodyRange]), into: &objects)
+            }
+        }
+
+        // contextJSON يصل غالباً كسلسلة JSON مهربة داخل كائن أكبر.
+        let contextPattern = #""contextJSON"\s*:\s*"((?:[^"\\]|\\.)*)""#
+        if let regex = try? NSRegularExpression(pattern: contextPattern) {
+            let range = NSRange(html.startIndex..., in: html)
+            for match in regex.matches(in: html, range: range) {
+                guard match.numberOfRanges > 1,
+                      let bodyRange = Range(match.range(at: 1), in: html) else { continue }
+                let escaped = String(html[bodyRange])
+                guard let data = ("\"" + escaped + "\"").data(using: .utf8),
+                      let decoded = try? JSONSerialization.jsonObject(with: data) as? String else { continue }
+                appendJSON(decoded, into: &objects)
+            }
+        }
+
+        return objects
+    }
+
+    private func appendJSON(_ raw: String, into objects: inout [Any]) {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed.count > 1 else { return }
+        guard let data = trimmed.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]) else {
+            return
+        }
+        objects.append(object)
+    }
+
+    /// يجمع عقد المنشورات من أي كائن JSON مهما كان عمقه.
+    private func collectMediaNodes(
+        in object: Any,
+        into nodes: inout [[String: Any]],
+        depth: Int = 0
+    ) {
+        guard depth < 40, nodes.count < 60 else { return }
+        if let dictionary = object as? [String: Any] {
+            if isMediaNode(dictionary) {
+                nodes.append(dictionary)
+                return
+            }
+            for value in dictionary.values {
+                collectMediaNodes(in: value, into: &nodes, depth: depth + 1)
+            }
+        } else if let array = object as? [Any] {
+            for value in array {
+                collectMediaNodes(in: value, into: &nodes, depth: depth + 1)
+            }
+        }
+    }
+
+    /// عقدة منشور حقيقية: تحمل كوداً ووقت نشر، وأحد حقول الوسائط.
+    private func isMediaNode(_ dictionary: [String: Any]) -> Bool {
+        guard dictionary["edge_owner_to_timeline_media"] == nil else { return false }
+        let hasCode = dictionary["shortcode"] != nil || dictionary["code"] != nil
+        let hasTime = dictionary["taken_at_timestamp"] != nil
+            || dictionary["taken_at"] != nil
+            || dictionary["takenAt"] != nil
+        guard hasCode, hasTime else { return false }
+        let hasMediaMarker = dictionary["is_video"] != nil
+            || dictionary["media_type"] != nil
+            || dictionary["video_view_count"] != nil
+            || dictionary["video_play_count"] != nil
+            || dictionary["like_count"] != nil
+            || dictionary["edge_liked_by"] != nil
+            || dictionary["edge_media_preview_like"] != nil
+            || dictionary["display_url"] != nil
+            || dictionary["thumbnail_src"] != nil
+            || dictionary["image_versions2"] != nil
+        return hasMediaMarker
+    }
+
+    /// قراءة عقد المنشورات من وسوم JSON وحدها (للصفحات التي تضع
+    /// البيانات في script type=application/json فقط).
+    private func mediaNodesFromScriptJSON(in html: String) -> [[String: Any]] {
+        var nodes: [[String: Any]] = []
+        for object in jsonObjects(in: html) {
+            collectMediaNodes(in: object, into: &nodes)
+            if nodes.count >= 60 { break }
+        }
+        return nodes
+    }
+
+    /// اسم صاحب المنشور من العقود.
+    private func usernameFromNodes(_ nodes: [[String: Any]]) -> String? {
+        for node in nodes {
+            if let owner = node["owner"] as? [String: Any],
+               let name = firstString(owner["username"], owner["name"]) {
+                return name.lowercased()
+            }
+            if let user = node["user"] as? [String: Any],
+               let name = firstString(user["username"]) {
+                return name.lowercased()
+            }
+            if let name = firstString(
+                node["ownerUsername"],
+                node["username"],
+                node["owner_username"]
+            ) {
+                return name.lowercased()
+            }
+        }
+        return nil
+    }
+
+    /// يبني عناصر المنشورات من عقود JSON المستخرجة.
+    private func buildVideos(from nodes: [[String: Any]]) -> [VideoItem] {
+        var seen = Set<String>()
+        var videos: [VideoItem] = []
+        for node in nodes {
+            let handle = usernameFromNodes([node]) ?? ""
+            guard let item = videoItem(from: node, handle: handle) else { continue }
+            guard seen.insert(item.id).inserted else { continue }
+            videos.append(item)
+        }
+        return videos.sorted { $0.createTime > $1.createTime }
+    }
 
     private func embeddedUser(in html: String) -> [String: Any]? {
         let patterns = [
@@ -662,7 +948,7 @@ final class DirectInstagramService {
         return trimmed.isEmpty ? handle : trimmed
     }
 
-    /// يقرأ «1,234 Followers» أو «١٢٣٤ متابع» ويعيد الرقم.
+    /// يقرأ «104M Followers» أو «1,234 Followers» أو «١٢٣٤ متابع» ويعيد الرقم.
     private func humanCount(in text: String, markers: [String]) -> Int64 {
         guard !text.isEmpty else { return 0 }
         let normalized = normalizeDigits(text)
@@ -674,12 +960,26 @@ final class DirectInstagramService {
         for marker in markers {
             guard let markerRange = lower.range(of: marker) else { continue }
             let prefix = String(lower[..<markerRange.lowerBound])
-            guard let numberRange = prefix.range(of: #"([0-9][0-9,\.]*)\s*$"#, options: .regularExpression) else { continue }
-            let rawNumber = String(prefix[numberRange])
+            guard let numberRange = prefix.range(
+                of: #"([0-9][0-9,\.]*)\s*([kmb])?\s*$"#,
+                options: .regularExpression
+            ) else { continue }
+            var rawNumber = String(prefix[numberRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+            var multiplier: Double = 1
+            if let last = rawNumber.last, "kmb".contains(last) {
+                switch last {
+                case "k": multiplier = 1_000
+                case "m": multiplier = 1_000_000
+                case "b": multiplier = 1_000_000_000
+                default: break
+                }
+                rawNumber.removeLast()
+            }
+            rawNumber = rawNumber
                 .replacingOccurrences(of: ",", with: "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             guard let value = Double(rawNumber) else { continue }
-            return Int64(value.rounded())
+            return Int64((value * multiplier).rounded())
         }
         return 0
     }
