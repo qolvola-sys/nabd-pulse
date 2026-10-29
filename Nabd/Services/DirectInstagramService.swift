@@ -676,7 +676,7 @@ final class DirectInstagramService {
         // صفحة الحساب لا تنشر مشاهدات الريلز، لكن صفحة كل ريل منفردة
         // تنشرها للزوار. نقرأها لكل فيديو، فتصبح المشاهدات والتقييم
         // أرقاماً حقيقية بلا تسجيل دخول.
-        let posts = await enrichViewCounts(buildVideos(from: nodes, handle: handle))
+        let posts = await enrichViewCounts(buildVideos(from: nodes, handle: handle), handle: handle)
         let followers = firstInt64(context["followers_count"], context["follower_count"]) ?? 0
         let following = firstInt64(context["following_count"], context["following"]) ?? 0
         let postsCount = firstInt(context["posts_count"]) ?? 0
@@ -756,22 +756,31 @@ final class DirectInstagramService {
         return nil
     }
 
-    /// يستخرج نص سلسلة contextJSON من HTML دون تعابير نمطية: يجد الكلمة،
-    /// ثم يقرأ حتى علامة التنصيص غير المهربة التي تُغلق السلسلة.
+    /// يستخرج نص سلسلة contextJSON من HTML دون تعابير نمطية: يجد المفتاح،
+    /// يعبر إغلاقه والنقطتين، ثم يقرأ حتى علامة التنصيص غير المهربة التي
+    /// تُغلق السلسلة.
     private func contextJSONPayload(in html: String) -> String? {
         guard let marker = html.range(of: "contextJSON") else { return nil }
-        let start = html.distance(from: html.startIndex, to: marker.upperBound)
-        var index = start
         let characters = Array(html)
         let count = characters.count
+        var index = html.distance(from: html.startIndex, to: marker.upperBound)
+        let limit = index + 80
 
-        // نتجاوز ما بين الكلمة وعلامة التنصيص (مسافات أو نقطتان).
-        while index < count && characters[index] != "\"" && characters[index] != "'" {
-            // لو طال البحث فالكلمة ليست مفتاحاً بل ذكراً عابراً.
-            if index - start > 40 { return nil }
+        // بعد اسم المفتاح يأتي إغلاقه `"` ثم `:`. نتجاوز حتى النقطتين،
+        // لا نتوقف عند إغلاق المفتاح كما كان يحدث سابقاً فيُقرأ ":".
+        while index < count && characters[index] != ":" {
+            if index > limit { return nil }
             index += 1
         }
         guard index < count else { return nil }
+        index += 1
+
+        // نتجاوز المسافات بين النقطتين وعلامة تنصيص القيمة.
+        while index < count && characters[index].isWhitespace {
+            if index > limit { return nil }
+            index += 1
+        }
+        guard index < count, characters[index] == "\"" || characters[index] == "'" else { return nil }
         let quote = characters[index]
         index += 1
 
@@ -791,6 +800,17 @@ final class DirectInstagramService {
             index += 1
         }
         return nil
+    }
+
+    /// السلسلة الخام لـ contextJSON: يدوياً أولاً، ثم بتعبير نمطي احتياطاً.
+    private func contextJSONString(in html: String) -> String? {
+        if let payload = contextJSONPayload(in: html) { return payload }
+        let pattern = #""contextJSON"\s*:\s*"((?:[^"\\]|\\.)*)""#
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(in: html, range: NSRange(html.startIndex..., in: html)),
+              match.numberOfRanges > 1,
+              let range = Range(match.range(at: 1), in: html) else { return nil }
+        return String(html[range])
     }
 
     private func decodeContext(_ escaped: String) -> [String: Any]? {
@@ -826,7 +846,7 @@ final class DirectInstagramService {
     /// المفردة تعرض `video_view_count` لأي زائر بلا تسجيل دخول. نطلبها
     /// لفيديوهات قليلة (أحدث المنشورات المحمّلة) ثم نضع الرقم الحقيقي
     /// في المنشور، فيصبح مجموع المشاهدات والتقييم الأسبوعي حقيقياً.
-    private func enrichViewCounts(_ videos: [VideoItem]) async -> [VideoItem] {
+    private func enrichViewCounts(_ videos: [VideoItem], handle: String) async -> [VideoItem] {
         lastViewEnrichment = ""
         let candidates = videos.filter { $0.isVideo && !$0.viewsExact }
         let shortcodes = Array(Set(candidates.compactMap { shortcode(from: $0) }))
@@ -846,7 +866,7 @@ final class DirectInstagramService {
             let fetched = await withTaskGroup(of: (String, Int64?).self) { group -> [(String, Int64?)] in
                 for code in chunk {
                     group.addTask { () -> (String, Int64?) in
-                        let value = await self.fetchViewCount(shortcode: code)
+                        let value = await self.fetchViewCount(shortcode: code, handle: handle)
                         return (code, value)
                     }
                 }
@@ -893,21 +913,33 @@ final class DirectInstagramService {
     }
 
     /// يقرأ عدّاد المشاهدات من صفحة تضمين منشور واحد.
-    private func fetchViewCount(shortcode: String) async -> Int64? {
+    private func fetchViewCount(shortcode: String, handle: String) async -> Int64? {
         guard let url = URL(string: "https://www.instagram.com/p/\(shortcode)/embed/") else { return nil }
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
         request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
         request.setValue("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", forHTTPHeaderField: "Accept")
         request.setValue("en-US,en;q=0.9", forHTTPHeaderField: "Accept-Language")
 
-        guard let (data, response) = try? await embedSession.data(for: request),
-              let http = response as? HTTPURLResponse,
-              (200..<300).contains(http.statusCode),
-              let html = String(data: data, encoding: .utf8),
-              let payload = contextJSONPayload(in: html),
-              let root = decodeContextRoot(payload),
-              let media = (root["gql_data"] as? [String: Any])?["shortcode_media"] as? [String: Any],
-              let mediaShortcode = stringValue(media["shortcode"]),
+        guard let (data, response) = try? await embedSession.data(for: request) else {
+            recordSample("view \(shortcode) transport-fail", for: handle)
+            return nil
+        }
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard (200..<300).contains(status),
+              let html = String(data: data, encoding: .utf8) else {
+            recordSample("view \(shortcode) status=\(status)", for: handle)
+            return nil
+        }
+        guard let payload = contextJSONString(in: html),
+              let root = decodeContextRoot(payload) else {
+            recordSample("view \(shortcode) status=\(status) ctx=0", for: handle)
+            return nil
+        }
+        guard let media = (root["gql_data"] as? [String: Any])?["shortcode_media"] as? [String: Any] else {
+            recordSample("view \(shortcode) status=\(status) ctx=1 gql=0", for: handle)
+            return nil
+        }
+        guard let mediaShortcode = stringValue(media["shortcode"]),
               mediaShortcode.caseInsensitiveCompare(shortcode) == .orderedSame,
               let views = firstInt64(
                 media["video_view_count"],
@@ -916,6 +948,7 @@ final class DirectInstagramService {
                 media["view_count"]
               ),
               views > 0 else {
+            recordSample("view \(shortcode) status=\(status) ctx=1 gql=1 count=0", for: handle)
             return nil
         }
         return views
@@ -1129,7 +1162,7 @@ final class DirectInstagramService {
 
         if let user {
             let profileHandle = (stringValue(user["username"]) ?? reference.handle).lowercased()
-            let posts = await enrichViewCounts(buildVideos(from: nodes, handle: profileHandle))
+            let posts = await enrichViewCounts(buildVideos(from: nodes, handle: profileHandle), handle: profileHandle)
             let result = try makeResult(
                 user: user,
                 reference: reference,
@@ -1163,7 +1196,7 @@ final class DirectInstagramService {
                 reference: reference,
                 createdAt: createdAt,
                 profileExact: false,
-                postsOverride: await enrichViewCounts(buildVideos(from: nodes, handle: handle)),
+                postsOverride: await enrichViewCounts(buildVideos(from: nodes, handle: handle), handle: handle),
                 postsCountOverride: postsCount > 0 ? Int(postsCount) : nil
             )
         }
