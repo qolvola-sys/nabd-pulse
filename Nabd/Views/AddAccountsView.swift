@@ -472,14 +472,18 @@ struct AddAccountsView: View {
                                 }
                             } else {
                                 VStack(alignment: .trailing, spacing: 1) {
-                                    Text("\(Num.maybeApprox(account.views24h, exact: account.dailyComplete && account.dailyViewsExact)) مشاهدة ٢٤س")
+                                    Text(account.isInstagram && account.views24h == 0
+                                         ? "المشاهدات غير متاحة"
+                                         : "\(Num.maybeApprox(account.views24h, exact: account.dailyComplete && account.dailyViewsExact)) مشاهدة ٢٤س")
                                         .font(.system(size: 10.5, weight: .bold, design: .rounded))
                                         .foregroundColor(Theme.cyan)
                                         .lineLimit(1)
                                         .minimumScaleFactor(0.6)
-                                    Text("أسبوعياً \(Num.maybeApprox(account.weeklyViews, exact: account.weeklyScoreExact)) · \(Num.score(account.weeklyScore, exact: account.weeklyScoreExact))%")
+                                    Text(account.isInstagram
+                                         ? "التقييم غير متاح"
+                                         : "أسبوعياً \(Num.maybeApprox(account.weeklyViews, exact: account.weeklyScoreExact)) · \(Num.score(account.weeklyScore, exact: account.weeklyScoreExact))%")
                                         .font(.system(size: 8.5, weight: .medium, design: .rounded))
-                                        .foregroundColor(WeeklyScoreStyle.color(for: account.weeklyScore))
+                                        .foregroundColor(account.isInstagram ? Theme.textTertiary : WeeklyScoreStyle.color(for: account.weeklyScore))
                                         .lineLimit(1)
                                         .minimumScaleFactor(0.6)
                                 }
