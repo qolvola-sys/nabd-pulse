@@ -44,16 +44,18 @@ struct AccountDetailView: View {
     }
 
     /// إنستغرام قد يعطي الإعجابات دون مشاهدات الفيديو، فلا نعرض صفراً مضللاً.
+    /// الآن نقرأ مشاهدات كل ريل من صفحة تضمينه المفردة، فالصفر الحقيقي يعني
+    /// «لم تُقرأ أي مشاهدة»، لا «لا مشاهدات».
     private var instagramViewsUnknown: Bool {
         current.isInstagram
             && current.fetchedVideos > 0
-            && (current.views == 0 || !current.viewsExact)
+            && current.views == 0
     }
 
-    /// التقييم الأسبوعي يقيس المشاهدات فقط. إن لم تكن المشاهدات معروفة
-    /// (إنستغرام لا ينشرها للحسابات العامة) فلا معنى لصفر، ونعرض «—».
+    /// التقييم الأسبوعي يقيس المشاهدات فقط. إن لم تكن مشاهدات الأسبوع
+    /// معروفة فلا معنى لصفر، ونعرض «—».
     private var ratingAvailable: Bool {
-        !(numbersUnavailable || instagramViewsUnknown)
+        !numbersUnavailable && (current.weeklyViews > 0 || weeklyExact)
     }
 
     /// إنستغرام لا ينشر عدد المشاركات للزوار؛ الصفر هنا يعني «غير معلن».
@@ -62,7 +64,9 @@ struct AccountDetailView: View {
     }
 
     private var views24hText: String {
-        if numbersUnavailable || instagramViewsUnknown { return "—" }
+        if numbersUnavailable { return "—" }
+        // صفر غير مؤكد (نافذة ناقصة) يظهر «—» بدل رقم يوحي بلا مشاهدات.
+        if current.views24h == 0 && !dailyExact { return "—" }
         return Num.maybeApprox(current.views24h, exact: dailyExact)
     }
 
@@ -72,7 +76,8 @@ struct AccountDetailView: View {
     }
 
     private var weeklyViewsText: String {
-        if numbersUnavailable || instagramViewsUnknown { return "—" }
+        if numbersUnavailable { return "—" }
+        if current.weeklyViews == 0 && !weeklyExact { return "—" }
         return Num.maybeApprox(current.weeklyViews, exact: weeklyExact)
     }
 

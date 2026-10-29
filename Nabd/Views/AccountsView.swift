@@ -1112,11 +1112,12 @@ struct AccountRow: View {
     private var instagramViewsUnknown: Bool {
         account.isInstagram
             && account.fetchedVideos > 0
-            && (account.views == 0 || !account.viewsExact)
+            && account.views == 0
     }
 
     private var views24hText: String {
-        if numbersUnavailable || instagramViewsUnknown { return "—" }
+        if numbersUnavailable { return "—" }
+        if account.views24h == 0 && !(account.dailyComplete && account.dailyViewsExact) { return "—" }
         return Num.maybeApprox(account.views24h, exact: account.dailyComplete && account.dailyViewsExact)
     }
 
@@ -1131,13 +1132,14 @@ struct AccountRow: View {
     }
 
     private var weeklyViewsText: String {
-        if numbersUnavailable || instagramViewsUnknown { return "—" }
+        if numbersUnavailable { return "—" }
+        if account.weeklyViews == 0 && !account.weeklyScoreExact { return "—" }
         return Num.maybeApprox(account.weeklyViews, exact: account.weeklyScoreExact)
     }
 
-    /// التقييم يقيس المشاهدات، فإن لم تكن معروفة فلا نعرض صفراً.
+    /// التقييم يقيس المشاهدات، فإن لم تكن مشاهدات الأسبوع معروفة فلا نعرض صفراً.
     private var ratingAvailable: Bool {
-        !(numbersUnavailable || instagramViewsUnknown)
+        !numbersUnavailable && (account.weeklyViews > 0 || account.weeklyScoreExact)
     }
 
     var body: some View {
