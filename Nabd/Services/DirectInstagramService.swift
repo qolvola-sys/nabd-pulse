@@ -222,6 +222,17 @@ final class DirectInstagramService {
     private var viewCountCache: [String: Int64] = [:]
     /// ملخص آخر قراءة للمشاهدات، يظهر في تقرير التشخيص.
     private var lastViewEnrichment = ""
+    /// أرشيف منشورات كل حساب، يتراكم بين المزامنات.
+    ///
+    /// صفحة التضمين تعرض أحدث ٦ منشورات فقط، فحساب ينشر أكثر من ذلك
+    /// لا يغطي أسبوعه في مزامنة واحدة. نحتفظ بكل منشور رآه التطبيق
+    /// خلال آخر ٨ أيام، فتتسع التغطية تلقائياً مع كل تحديث يومي حتى
+    /// تكتمل ٧ أيام بلا حاجة إلى تسجيل دخول.
+    private var postHistory: [String: [VideoItem]] = [:]
+    private var historyLoaded = false
+    private let historyStoreKey = "nabd.instagram.history.v1"
+    private let historyDays = 9
+    private let historyLimit = 40
 
     func diagnostic(for handle: String) -> String {
         diagnostics[handle.lowercased()] ?? "لم تُجرَّب بعد"
@@ -676,7 +687,7 @@ final class DirectInstagramService {
         // صفحة الحساب لا تنشر مشاهدات الريلز، لكن صفحة كل ريل منفردة
         // تنشرها للزوار. نقرأها لكل فيديو، فتصبح المشاهدات والتقييم
         // أرقاماً حقيقية بلا تسجيل دخول.
-        let posts = await enrichViewCounts(buildVideos(from: nodes, handle: handle), handle: handle)
+        let posts = await enrichViewCounts(mergedWithHistory(buildVideos(from: nodes, handle: handle), handle: handle), handle: handle)
         let followers = firstInt64(context["followers_count"], context["follower_count"]) ?? 0
         let following = firstInt64(context["following_count"], context["following"]) ?? 0
         let postsCount = firstInt(context["posts_count"]) ?? 0
@@ -848,7 +859,13 @@ final class DirectInstagramService {
     /// في المنشور، فيصبح مجموع المشاهدات والتقييم الأسبوعي حقيقياً.
     private func enrichViewCounts(_ videos: [VideoItem], handle: String) async -> [VideoItem] {
         lastViewEnrichment = ""
-        let candidates = videos.filter { $0.isVideo && !$0.viewsExact }
+        // نشمل كل فيديو داخل نافذة الأسبوع حتى يُحدَّث عدّاده كل مزامنة،
+        // لا الفيديوهات الجديدة فقط. الأرشيف يعطي مشاهدات الأيام السابقة،
+        // وقراءتها من جديد تجعلها حديثة لا مجمّدة.
+        let candidates = videos
+            .filter { $0.isVideo }
+            .sorted { $0.createTime > $1.createTime }
+            .prefix(16)
         let shortcodes = Array(Set(candidates.compactMap { shortcode(from: $0) }))
         guard !shortcodes.isEmpty else { return videos }
 
@@ -890,7 +907,7 @@ final class DirectInstagramService {
         lastViewEnrichment = "views \(counts.count)/\(shortcodes.count)"
         guard !counts.isEmpty else { return videos }
         return videos.map { video in
-            guard video.isVideo, !video.viewsExact,
+            guard video.isVideo,
                   let code = shortcode(from: video),
                   let views = counts[code],
                   views > 0 else { return video }
@@ -911,6 +928,62 @@ final class DirectInstagramService {
             return nil
         }
         return last
+    }
+
+    /// يضمّ منشورات المزامنة الحالية إلى أرشيف الحساب ويقصّ ما تجاوز ٩ أيام.
+    ///
+    /// هذا هو ما يجعل التقييم الأسبوعي يغطي الأسبوع كاملاً بلا تسجيل دخول:
+    /// كل مزامنة تضيف ما ظهر من منشورات جديدة، والقديمة تبقى محفوظة حتى
+    /// تخرج من نافذة الأسبوع.
+    private func mergedWithHistory(_ fresh: [VideoItem], handle: String) -> [VideoItem] {
+        loadHistoryIfNeeded()
+        let key = handle.lowercased()
+        let cutoff = Int(Date().timeIntervalSince1970) - historyDays * daySeconds
+
+        var map: [String: VideoItem] = [:]
+        for item in postHistory[key] ?? [] where item.createTime >= cutoff {
+            map[item.id] = item
+        }
+        var added = 0
+        for item in fresh {
+            if let known = map[item.id] {
+                // الجديد أعلى أولوية، لكن لا نستبدل عدداً معروفاً بصفر
+                // لأن بعض الاستجابات تعود بلا عدّاد.
+                if item.views > 0 || known.views == 0 {
+                    map[item.id] = item
+                }
+            } else {
+                map[item.id] = item
+                added += 1
+            }
+        }
+
+        let merged = map.values.sorted { $0.createTime > $1.createTime }
+        postHistory[key] = merged
+        saveHistory()
+        if added > 0 {
+            recordSample("history +\(added) → \(merged.count) posts", for: key)
+        }
+        return merged
+    }
+
+    private func loadHistoryIfNeeded() {
+        guard !historyLoaded else { return }
+        historyLoaded = true
+        guard let data = UserDefaults.standard.data(forKey: historyStoreKey),
+              let decoded = try? JSONDecoder().decode([String: [VideoItem]].self, from: data) else {
+            return
+        }
+        postHistory = decoded
+    }
+
+    private func saveHistory() {
+        var trimmed: [String: [VideoItem]] = [:]
+        for (key, items) in postHistory {
+            trimmed[key] = Array(items.prefix(historyLimit))
+        }
+        guard let data = try? JSONEncoder().encode(trimmed) else { return }
+        UserDefaults.standard.set(data, forKey: historyStoreKey)
     }
 
     /// يبحث عن عدّاد المشاهدات في أي مكان من الشجرة، لا في مسار ثابت.
@@ -1254,7 +1327,7 @@ final class DirectInstagramService {
 
         if let user {
             let profileHandle = (stringValue(user["username"]) ?? reference.handle).lowercased()
-            let posts = await enrichViewCounts(buildVideos(from: nodes, handle: profileHandle), handle: profileHandle)
+            let posts = await enrichViewCounts(mergedWithHistory(buildVideos(from: nodes, handle: profileHandle), handle: profileHandle), handle: profileHandle)
             let result = try makeResult(
                 user: user,
                 reference: reference,
@@ -1288,7 +1361,7 @@ final class DirectInstagramService {
                 reference: reference,
                 createdAt: createdAt,
                 profileExact: false,
-                postsOverride: await enrichViewCounts(buildVideos(from: nodes, handle: handle), handle: handle),
+                postsOverride: await enrichViewCounts(mergedWithHistory(buildVideos(from: nodes, handle: handle), handle: handle), handle: handle),
                 postsCountOverride: postsCount > 0 ? Int(postsCount) : nil
             )
         }

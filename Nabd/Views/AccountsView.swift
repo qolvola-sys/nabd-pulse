@@ -1134,7 +1134,9 @@ struct AccountRow: View {
     private var weeklyViewsText: String {
         if numbersUnavailable { return "—" }
         if account.weeklyViews == 0 && !account.weeklyScoreExact { return "—" }
-        return Num.maybeApprox(account.weeklyViews, exact: account.weeklyScoreExact)
+        return account.weeklyScoreExact
+            ? Num.full(account.weeklyViews)
+            : Num.atLeast(account.weeklyViews)
     }
 
     /// التقييم يقيس المشاهدات، فإن لم تكن مشاهدات الأسبوع معروفة فلا نعرض صفراً.

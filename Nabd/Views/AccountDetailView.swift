@@ -78,7 +78,8 @@ struct AccountDetailView: View {
     private var weeklyViewsText: String {
         if numbersUnavailable { return "—" }
         if current.weeklyViews == 0 && !weeklyExact { return "—" }
-        return Num.maybeApprox(current.weeklyViews, exact: weeklyExact)
+        // الأسبوع قد يكون ناقص التغطية، فالرقم حدّ أدنى لا تقدير.
+        return weeklyExact ? Num.full(current.weeklyViews) : Num.atLeast(current.weeklyViews)
     }
 
     private var posts7dText: String {
@@ -104,7 +105,7 @@ struct AccountDetailView: View {
                 return "كل منشورات آخر ٧ أيام المتاحة علناً محمّلة، ومشاهدات الفيديو دقيقة 100%."
             }
             if !current.weeklyComplete {
-                return "≈ يُعرض للزائر أحدث منشورات الحساب؛ قد تكون هناك منشورات أقدم لم يعرضها إنستغرام."
+                return "الرقم حدّ أدنى: يجمع منشورات الأسبوع المعروفة، وتتسع التغطية مع كل تحديث يومي حتى تكتمل ٧ أيام."
             }
             return "≈ مشاهدات إنستغرام متاحة للفيديو والريل فقط؛ منشورات الصور لا تكشف مشاهدات عامة."
         }

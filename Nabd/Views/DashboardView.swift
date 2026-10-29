@@ -78,14 +78,14 @@ struct DashboardView: View {
     private var weeklyFootnote: String {
         if !weeklyRatingAvailable {
             return hasInstagramAccounts
-                ? "إنستغرام لا ينشر مشاهدات الفيديو للزوار، فلا يمكن احتساب تقييم أسبوعي دقيق."
+                ? "لم تُقرأ مشاهدات فيديوهات هذا الحساب بعد؛ اضغط «تحديث» لقراءتها من صفحات الريلز."
                 : "لم تُقرأ مشاهدات كافية بعد لاحتساب التقييم الأسبوعي."
         }
         if store.summary.weeklyComplete && store.summary.weeklyViewsExact {
             return "كل منشورات آخر ٧ أيام محمّلة، والنتيجة دقيقة 100%."
         }
         if !store.summary.weeklyComplete && !store.summary.weeklyViewsExact {
-            return "≈ النتيجة من المنشورات المحمّلة؛ " + accuracySentence
+            return "≥ النتيجة من منشورات الأسبوع المعروفة، وتتسع التغطية مع كل تحديث يومي؛ " + accuracySentence
         }
         if !store.summary.weeklyComplete {
             return hasFacebookAccounts
@@ -605,7 +605,9 @@ struct DashboardView: View {
                         icon: "play.fill",
                         tint: Theme.violet,
                         value: weeklyRatingAvailable
-                            ? Num.maybeApprox(store.summary.weeklyViews, exact: weeklyExact)
+                            ? (weeklyExact
+                                ? Num.full(store.summary.weeklyViews)
+                                : Num.atLeast(store.summary.weeklyViews))
                             : "—",
                         label: "مشاهدة لمنشورات ٧ أيام"
                     )
