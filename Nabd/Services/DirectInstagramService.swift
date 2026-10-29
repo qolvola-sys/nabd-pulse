@@ -188,6 +188,16 @@ final class DirectInstagramService {
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
         "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
     private let appID = "936619743392459"
+    /// ترويسة تطبيق أندرويد: مسار الموجز يرفض ترويسة Safari بـ401 مهما
+    /// كانت الترويسات الأخرى، ويقبل هذه مع Origin وReferer. هذا مقياس
+    /// من تجربة مباشرة على المسار نفسه.
+    private let clipsUserAgent =
+        "Instagram 275.0.0.27.98 Android (33/13; 420dpi; 1080x2400; " +
+        "samsung; SM-G991B; o1s; exynos2100; en_US; 458229237)"
+    /// بعد رفضين متتاليين نتوقف عن الموجز عشر دقائق لكل الحسابات، بدل
+    /// إهدار المزامنة في إعادة المحاولة ثلاثين مرة على عنوان محظور.
+    private var clipsBlockedUntil = Date.distantPast
+    private var clipsFailures = 0
     private let daySeconds = 24 * 60 * 60
     private let weekSeconds = 7 * 24 * 60 * 60
     private let minimumRequestGap: TimeInterval = 0.5
@@ -1038,6 +1048,11 @@ final class DirectInstagramService {
 
     private func fetchReelsFeed(ownerID: String, handle: String, pages: Int? = nil) async -> [VideoItem] {
         guard !ownerID.isEmpty else { return [] }
+        // عنوان محظور: لا نكرر المحاولة لكل حساب، نعود فوراً.
+        guard Date() >= clipsBlockedUntil else {
+            recordSample("reels paused", for: handle)
+            return []
+        }
         var cursor = ""
         var collected: [VideoItem] = []
         let cutoff = Int(Date().timeIntervalSince1970) - historyDays * daySeconds
@@ -1047,20 +1062,50 @@ final class DirectInstagramService {
             guard let url = URL(string: "https://www.instagram.com/api/v1/clips/user/") else { break }
             var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 20)
             request.httpMethod = "POST"
-            request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
-            request.setValue("936619743392459", forHTTPHeaderField: "x-ig-app-id")
+            request.setValue(clipsUserAgent, forHTTPHeaderField: "User-Agent")
+            request.setValue(appID, forHTTPHeaderField: "x-ig-app-id")
             request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+            request.setValue("*/*", forHTTPHeaderField: "Accept")
+            // هاتان الترويستان هما الفرق بين 401 و200 على هذا المسار.
+            request.setValue("https://www.instagram.com", forHTTPHeaderField: "Origin")
+            request.setValue("https://www.instagram.com/", forHTTPHeaderField: "Referer")
             request.setValue("en-US,en;q=0.9", forHTTPHeaderField: "Accept-Language")
             let body = "target_user_id=\(ownerID)&page_size=12&include_feed_video=true&max_id=\(cursor)"
             request.httpBody = body.data(using: .utf8)
 
-            guard let (data, response) = try? await embedSession.data(for: request),
-                  let http = response as? HTTPURLResponse,
-                  http.statusCode == 200,
-                  let json = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]) as? [String: Any] else {
-                recordSample("reels page\(page + 1) unavailable", for: handle)
+            var json: [String: Any]?
+            var lastStatus = 0
+            for attempt in 0..<2 {
+                guard let (data, response) = try? await embedSession.data(for: request),
+                      let http = response as? HTTPURLResponse else {
+                    lastStatus = 0
+                    break
+                }
+                lastStatus = http.statusCode
+                if http.statusCode == 200,
+                   let parsed = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]) as? [String: Any] {
+                    json = parsed
+                    break
+                }
+                // 401/429/403 تعني حدّ طلبات لا خطأ طلب: محاولة واحدة
+                // بعد خمس ثوانٍ، ثم نرفع الراية لكل الحسابات.
+                if [401, 403, 429].contains(http.statusCode), attempt == 0 {
+                    try? await Task.sleep(nanoseconds: 5_000_000_000)
+                    continue
+                }
                 break
             }
+
+            guard let json else {
+                clipsFailures += 1
+                if clipsFailures >= 2 {
+                    clipsBlockedUntil = Date().addingTimeInterval(600)
+                }
+                recordSample("reels p\(page + 1) \(lastStatus)", for: handle)
+                break
+            }
+            clipsFailures = 0
+
             let items = json["items"] as? [[String: Any]] ?? []
             guard !items.isEmpty else { break }
 
