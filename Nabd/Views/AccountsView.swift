@@ -904,7 +904,13 @@ struct AccountsView: View {
             Rectangle().fill(Theme.borderSoft).frame(width: 1, height: 24)
             stripItem(title: "مشاهدات ٧ أيام", value: weeklyViewsText, tint: Theme.cyan)
             Rectangle().fill(Theme.borderSoft).frame(width: 1, height: 24)
-            stripItem(title: "تقييم المنصة", value: weeklyScoreText, tint: WeeklyScoreStyle.color(for: platformSummary.weeklyScore))
+            stripItem(
+                title: "تقييم المنصة",
+                value: weeklyScoreText,
+                tint: platformWeeklyViewsUnavailable
+                    ? Theme.textTertiary
+                    : WeeklyScoreStyle.color(for: platformSummary.weeklyScore)
+            )
         }
         .padding(.vertical, 12)
         .background(
@@ -1129,6 +1135,11 @@ struct AccountRow: View {
         return Num.maybeApprox(account.weeklyViews, exact: account.weeklyScoreExact)
     }
 
+    /// التقييم يقيس المشاهدات، فإن لم تكن معروفة فلا نعرض صفراً.
+    private var ratingAvailable: Bool {
+        !(numbersUnavailable || instagramViewsUnknown)
+    }
+
     var body: some View {
         VStack(spacing: 12) {
             HStack(spacing: 12) {
@@ -1213,7 +1224,7 @@ struct AccountRow: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.65)
                 Spacer(minLength: 4)
-                WeeklyScoreBadge(score: account.weeklyScore, compact: true, exact: account.weeklyScoreExact)
+                WeeklyScoreBadge(score: account.weeklyScore, compact: true, exact: account.weeklyScoreExact, available: ratingAvailable)
             }
 
             if account.isInstagram {

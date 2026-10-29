@@ -50,6 +50,17 @@ struct AccountDetailView: View {
             && (current.views == 0 || !current.viewsExact)
     }
 
+    /// التقييم الأسبوعي يقيس المشاهدات فقط. إن لم تكن المشاهدات معروفة
+    /// (إنستغرام لا ينشرها للحسابات العامة) فلا معنى لصفر، ونعرض «—».
+    private var ratingAvailable: Bool {
+        !(numbersUnavailable || instagramViewsUnknown)
+    }
+
+    /// إنستغرام لا ينشر عدد المشاركات للزوار؛ الصفر هنا يعني «غير معلن».
+    private var sharesUnavailable: Bool {
+        numbersUnavailable || (current.isInstagram && current.shares == 0)
+    }
+
     private var views24hText: String {
         if numbersUnavailable || instagramViewsUnknown { return "—" }
         return Num.maybeApprox(current.views24h, exact: dailyExact)
@@ -81,8 +92,8 @@ struct AccountDetailView: View {
             return "≈ مشاهدات فيسبوك متاحة للفيديو فقط؛ المنشورات النصية والصور لا تكشف مشاهدات عامة."
         }
         if current.isInstagram {
-            if !current.viewsExact {
-                return "إنستغرام لم يكشف مشاهدات فيديوهات هذا الحساب الآن، لذا تظهر «—». الإعجابات محسوبة من المنشورات المتاحة علناً."
+            if !ratingAvailable {
+                return "إنستغرام لم يكشف مشاهدات فيديوهات هذا الحساب، لذا يُعرض «—» بدل تقييم. الإعجابات والتعليقات محسوبة من المنشورات المتاحة علناً."
             }
             if current.weeklyComplete && current.weeklyViewsExact {
                 return "كل منشورات آخر ٧ أيام المتاحة علناً محمّلة، ومشاهدات الفيديو دقيقة 100%."
@@ -424,11 +435,11 @@ struct AccountDetailView: View {
                     .font(.system(size: 12.5, weight: .bold))
                     .foregroundColor(Theme.text)
                 Spacer()
-                WeeklyScoreBadge(score: current.weeklyScore, exact: weeklyExact)
+                WeeklyScoreBadge(score: current.weeklyScore, exact: weeklyExact, available: ratingAvailable)
             }
 
             HStack(alignment: .center, spacing: 16) {
-                WeeklyScoreRing(score: current.weeklyScore, size: 84, lineWidth: 7, exact: weeklyExact)
+                WeeklyScoreRing(score: current.weeklyScore, size: 84, lineWidth: 7, exact: weeklyExact, available: ratingAvailable)
 
                 VStack(alignment: .leading, spacing: 9) {
                     weeklyStat(
@@ -443,9 +454,9 @@ struct AccountDetailView: View {
                         value: posts7dText,
                         label: "منشور في ٧ أيام"
                     )
-                    Text(WeeklyScore.label(for: current.weeklyScore))
+                    Text(ratingAvailable ? WeeklyScore.label(for: current.weeklyScore) : "لا يمكن التقييم بلا مشاهدات")
                         .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(WeeklyScoreStyle.color(for: current.weeklyScore))
+                        .foregroundColor(ratingAvailable ? WeeklyScoreStyle.color(for: current.weeklyScore) : Theme.textTertiary)
                 }
 
                 Spacer(minLength: 0)
@@ -561,7 +572,7 @@ struct AccountDetailView: View {
             if current.hasVideoEngagementData {
                 engagementItem(icon: "bubble.right.fill", value: current.comments, label: "تعليق", tint: Theme.cyan, unavailable: numbersUnavailable)
                 Rectangle().fill(Theme.borderSoft).frame(width: 1, height: 26)
-                engagementItem(icon: "arrowshape.turn.up.right.fill", value: current.shares, label: "مشاركة", tint: Theme.violet, unavailable: numbersUnavailable)
+                engagementItem(icon: "arrowshape.turn.up.right.fill", value: current.shares, label: "مشاركة", tint: Theme.violet, unavailable: sharesUnavailable)
                 Rectangle().fill(Theme.borderSoft).frame(width: 1, height: 26)
             } else {
                 engagementItem(icon: "square.stack.3d.up.fill", value: Int64(current.posts), label: "منشور", tint: Theme.cyan, exact: current.postsCountExact, unavailable: numbersUnavailable)

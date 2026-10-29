@@ -161,14 +161,19 @@ struct WeeklyScoreBadge: View {
     let score: Int
     var compact: Bool = false
     var exact: Bool = true
+    /// التقييم يحتاج مشاهدات. إن لم ينشرها الموقع (إنستغرام للحسابات
+    /// العامة) نعرض «—» بدل صفر يبدو نتيجة سيئة.
+    var available: Bool = true
 
-    private var tint: Color { WeeklyScoreStyle.color(for: score) }
+    private var tint: Color { available ? WeeklyScoreStyle.color(for: score) : Theme.textTertiary }
 
     var body: some View {
         HStack(spacing: 4) {
-            Image(systemName: exact ? "chart.bar.fill" : "chart.bar.doc.horizontal.fill")
+            Image(systemName: available
+                  ? (exact ? "chart.bar.fill" : "chart.bar.doc.horizontal.fill")
+                  : "chart.bar.xaxis")
                 .font(.system(size: compact ? 8.5 : 10, weight: .bold))
-            Text(Num.score(score, exact: exact) + "%")
+            Text(available ? Num.score(score, exact: exact) + "%" : "—")
                 .font(.system(size: compact ? 11 : 12.5, weight: .heavy, design: .rounded))
         }
         .foregroundColor(tint)
@@ -184,27 +189,30 @@ struct WeeklyScoreRing: View {
     var size: CGFloat = 94
     var lineWidth: CGFloat = 8
     var exact: Bool = true
+    /// التقييم يحتاج مشاهدات. إن لم ينشرها الموقع (إنستغرام للحسابات
+    /// العامة) نعرض «—» وحلقة فارغة بدل صفر مضلل.
+    var available: Bool = true
 
-    private var tint: Color { WeeklyScoreStyle.color(for: score) }
+    private var tint: Color { available ? WeeklyScoreStyle.color(for: score) : Theme.textTertiary }
 
     var body: some View {
         ZStack {
             Circle()
                 .stroke(Theme.borderSoft, lineWidth: lineWidth)
             Circle()
-                .trim(from: 0, to: min(max(CGFloat(score) / 100, 0), 1))
+                .trim(from: 0, to: available ? min(max(CGFloat(score) / 100, 0), 1) : 0)
                 .stroke(
                     WeeklyScoreStyle.gradient(for: score),
                     style: StrokeStyle(lineWidth: lineWidth, lineCap: .round)
                 )
                 .rotationEffect(.degrees(-90))
             VStack(spacing: 1) {
-                Text(Num.score(score, exact: exact) + "%")
+                Text(available ? Num.score(score, exact: exact) + "%" : "—")
                     .font(.system(size: size * (exact ? 0.27 : 0.23), weight: .heavy, design: .rounded))
                     .foregroundColor(Theme.text)
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
-                Text(exact ? "من 100" : "تقدير من 100")
+                Text(available ? (exact ? "من 100" : "تقدير من 100") : "غير متاح")
                     .font(.system(size: size * 0.09, weight: .semibold))
                     .foregroundColor(Theme.textTertiary)
             }

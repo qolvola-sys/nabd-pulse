@@ -69,7 +69,18 @@ struct DashboardView: View {
         store.summary.weeklyComplete && store.summary.weeklyViewsExact
     }
 
+    /// التقييم يقيس المشاهدات فقط. إن لم تكن معروفة (إنستغرام لا ينشرها)
+    /// فلا نعرض 0% يبدو نتيجة سيئة، بل «—».
+    private var weeklyRatingAvailable: Bool {
+        store.summary.weeklyViews > 0 || weeklyExact
+    }
+
     private var weeklyFootnote: String {
+        if !weeklyRatingAvailable {
+            return hasInstagramAccounts
+                ? "إنستغرام لا ينشر مشاهدات الفيديو للزوار، فلا يمكن احتساب تقييم أسبوعي دقيق."
+                : "لم تُقرأ مشاهدات كافية بعد لاحتساب التقييم الأسبوعي."
+        }
         if store.summary.weeklyComplete && store.summary.weeklyViewsExact {
             return "كل منشورات آخر ٧ أيام محمّلة، والنتيجة دقيقة 100%."
         }
@@ -90,7 +101,15 @@ struct DashboardView: View {
     }
 
     private var views24hText: String {
-        Num.maybeApprox(store.summary.views24h, exact: dailyExact)
+        // «0» لمشاهدات إنستغرام ليس رقماً حقيقياً؛ الموقع لا ينشرها للزوار.
+        dailyViewsAvailable
+            ? Num.maybeApprox(store.summary.views24h, exact: dailyExact)
+            : "—"
+    }
+
+    /// هل مشاهدات ٢٤س معروفة فعلاً؟ الصفر الدقيق فقط هو صفر حقيقي.
+    private var dailyViewsAvailable: Bool {
+        store.summary.views24h > 0 || dailyExact
     }
 
     private var posts7dText: String {
@@ -579,13 +598,15 @@ struct DashboardView: View {
             )
 
             HStack(alignment: .center, spacing: 16) {
-                WeeklyScoreRing(score: store.summary.weeklyScore, exact: weeklyExact)
+                WeeklyScoreRing(score: store.summary.weeklyScore, exact: weeklyExact, available: weeklyRatingAvailable)
 
                 VStack(alignment: .leading, spacing: 10) {
                     weeklyMetric(
                         icon: "play.fill",
                         tint: Theme.violet,
-                        value: Num.maybeApprox(store.summary.weeklyViews, exact: weeklyExact),
+                        value: weeklyRatingAvailable
+                            ? Num.maybeApprox(store.summary.weeklyViews, exact: weeklyExact)
+                            : "—",
                         label: "مشاهدة لمنشورات ٧ أيام"
                     )
                     weeklyMetric(
@@ -597,10 +618,14 @@ struct DashboardView: View {
                     HStack(spacing: 5) {
                         Image(systemName: "sparkles")
                             .font(.system(size: 9, weight: .bold))
-                        Text(WeeklyScore.label(for: store.summary.weeklyScore))
+                        Text(weeklyRatingAvailable
+                             ? WeeklyScore.label(for: store.summary.weeklyScore)
+                             : "لا يمكن التقييم بلا مشاهدات")
                             .font(.system(size: 10.5, weight: .semibold))
                     }
-                    .foregroundColor(WeeklyScoreStyle.color(for: store.summary.weeklyScore))
+                    .foregroundColor(weeklyRatingAvailable
+                                     ? WeeklyScoreStyle.color(for: store.summary.weeklyScore)
+                                     : Theme.textTertiary)
                 }
 
                 Spacer(minLength: 0)
@@ -1006,7 +1031,9 @@ struct DashboardView: View {
                     HStack(spacing: 5) {
                         Text(account.weeklyViews > 0
                              ? "\(accountWeeklyViewsText(account)) مشاهدة"
-                             : "لا مشاهدات هذا الأسبوع")
+                             : (account.isInstagram
+                                ? "المشاهدات غير متاحة"
+                                : "لا مشاهدات هذا الأسبوع"))
                         if account.weeklyViews > 0 {
                             Text("·")
                             Text(account.weeklyComplete
