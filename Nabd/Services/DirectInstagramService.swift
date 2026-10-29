@@ -858,10 +858,11 @@ final class DirectInstagramService {
         }
         let missing = shortcodes.filter { counts[$0] == nil }
 
-        // ثلاث طلبات متوازية في كل دفعة: سريع بلا إغراق إنستغرام.
+        // طلب واحد في كل مرة، وفاصل بين الطلبات: إنستغرام يحدّ الطلبات
+        // من عنوان الجهاز، والتأني أهم من السرعة هنا.
         var index = 0
         while index < missing.count {
-            let end = min(index + 3, missing.count)
+            let end = min(index + 1, missing.count)
             let chunk = Array(missing[index..<end])
             let fetched = await withTaskGroup(of: (String, Int64?).self) { group -> [(String, Int64?)] in
                 for code in chunk {
@@ -882,7 +883,7 @@ final class DirectInstagramService {
             }
             index = end
             if index < missing.count {
-                try? await Task.sleep(nanoseconds: 150_000_000)
+                try? await Task.sleep(nanoseconds: 700_000_000)
             }
         }
 
@@ -912,46 +913,137 @@ final class DirectInstagramService {
         return last
     }
 
-    /// يقرأ عدّاد المشاهدات من صفحة تضمين منشور واحد.
-    private func fetchViewCount(shortcode: String, handle: String) async -> Int64? {
-        guard let url = URL(string: "https://www.instagram.com/p/\(shortcode)/embed/") else { return nil }
-        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
-        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
-        request.setValue("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", forHTTPHeaderField: "Accept")
-        request.setValue("en-US,en;q=0.9", forHTTPHeaderField: "Accept-Language")
+    /// يبحث عن عدّاد المشاهدات في أي مكان من الشجرة، لا في مسار ثابت.
+    ///
+    /// إنستغرام يغيّر شكل الاستجابة بين نسخة وأخرى: `gql_data.shortcode_media`
+    /// مرة، و`xdt_api__v1__media__shortcode__web_info` مرة، وكائن مباشر مرة
+    /// ثالثة. البحث التكراري عن أي قاموس يحمل نفس الـshortcode ومعه عدّاد
+    /// مشاهدات ينجح في كل الأشكال، ويشترط تطابق الـshortcode حتى لا تُنسب
+    /// مشاهدات منشور لآخر.
+    private func findViewCount(in value: Any, shortcode: String, depth: Int = 0) -> Int64? {
+        guard depth < 26 else { return nil }
+        if let dictionary = value as? [String: Any] {
+            if let code = stringValue(dictionary["shortcode"]),
+               code.caseInsensitiveCompare(shortcode) == .orderedSame,
+               let views = firstInt64(
+                   dictionary["video_view_count"],
+                   dictionary["video_play_count"],
+                   dictionary["play_count"],
+                   dictionary["view_count"]
+               ),
+               views > 0 {
+                return views
+            }
+            for child in dictionary.values {
+                if let found = findViewCount(in: child, shortcode: shortcode, depth: depth + 1) {
+                    return found
+                }
+            }
+            return nil
+        }
+        if let array = value as? [Any] {
+            for child in array {
+                if let found = findViewCount(in: child, shortcode: shortcode, depth: depth + 1) {
+                    return found
+                }
+            }
+        }
+        return nil
+    }
 
-        guard let (data, response) = try? await embedSession.data(for: request) else {
-            recordSample("view \(shortcode) transport-fail", for: handle)
-            return nil
+    /// يستخرج العدّاد من HTML أياً كان الشكل: سلسلة contextJSON المضغوطة،
+    /// أو كائن JSON مستقل في وسم application/json، أو بيانات وصفية.
+    private func viewCount(in html: String, shortcode: String) -> Int64? {
+        if let payload = contextJSONString(in: html),
+           let root = decodeContextRoot(payload),
+           let views = findViewCount(in: root, shortcode: shortcode) {
+            return views
         }
-        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        guard (200..<300).contains(status),
-              let html = String(data: data, encoding: .utf8) else {
-            recordSample("view \(shortcode) status=\(status)", for: handle)
-            return nil
+        for object in jsonObjects(in: html) {
+            if let views = findViewCount(in: object, shortcode: shortcode) {
+                return views
+            }
         }
-        guard let payload = contextJSONString(in: html),
-              let root = decodeContextRoot(payload) else {
-            recordSample("view \(shortcode) status=\(status) ctx=0", for: handle)
-            return nil
+        return nil
+    }
+
+    /// يقرأ عدّاد المشاهدات من صفحة تضمين منشور واحد.
+    ///
+    /// الترتيب: `/p/` ثم `/reel/` مباشرة، وبعد 429 محاولة ثانية بعد انتظار،
+    /// ثم تمرير الصفحة عبر مرحّل يقرأها من شبكته. كل ذلك بلا كوكيز ولا
+    /// تسجيل دخول، ولا يُرسل إلا shortcode منشور عام.
+    private func fetchViewCount(shortcode: String, handle: String) async -> Int64? {
+        let directPaths = [
+            "https://www.instagram.com/p/\(shortcode)/embed/",
+            "https://www.instagram.com/reel/\(shortcode)/embed/"
+        ]
+
+        var lastStatus = 0
+        for path in directPaths {
+            guard let url = URL(string: path) else { continue }
+            var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 18)
+            request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+            request.setValue("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", forHTTPHeaderField: "Accept")
+            request.setValue("en-US,en;q=0.9", forHTTPHeaderField: "Accept-Language")
+            request.setValue("https://www.instagram.com/", forHTTPHeaderField: "Referer")
+
+            guard let (data, response) = try? await embedSession.data(for: request) else {
+                lastStatus = 0
+                continue
+            }
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            lastStatus = status
+
+            // 429/403 يعني أن إنستغرام حدّ الطلبات من شبكة الجهاز. ننتظر
+            // ونعيد المحاولة مرتين، فالقيد مؤقت في الغالب.
+            if status == 429 || status == 403 {
+                for pause in [2.0, 4.0] {
+                    try? await Task.sleep(nanoseconds: UInt64(pause * 1_000_000_000))
+                    guard let retry = try? await embedSession.data(for: request),
+                          let http = retry.response as? HTTPURLResponse,
+                          (200..<300).contains(http.statusCode),
+                          let html = String(data: retry.data, encoding: .utf8) else { continue }
+                    if let views = viewCount(in: html, shortcode: shortcode) {
+                        recordSample("view \(shortcode) recovered after rate limit", for: handle)
+                        return views
+                    }
+                }
+                recordSample("view \(shortcode) rate-limited status=\(status)", for: handle)
+                continue
+            }
+
+            guard (200..<300).contains(status),
+                  let html = String(data: data, encoding: .utf8) else {
+                continue
+            }
+            if let views = viewCount(in: html, shortcode: shortcode) {
+                return views
+            }
+            recordSample("view \(shortcode) status=\(status) ctx=\(html.contains("contextJSON") ? 1 : 0) parsed=0", for: handle)
         }
-        guard let media = (root["gql_data"] as? [String: Any])?["shortcode_media"] as? [String: Any] else {
-            recordSample("view \(shortcode) status=\(status) ctx=1 gql=0", for: handle)
-            return nil
+
+        // المسار الاحتياطي: صفحة المنشور عبر مرحّل يقرأها من شبكته.
+        let relayURLs = [
+            "https://r.jina.ai/https://www.instagram.com/p/\(shortcode)/embed/",
+            "https://www-instagram-com.translate.goog/p/\(shortcode)/embed/?_x_tr_sl=auto&_x_tr_tl=en&_x_tr_hl=en"
+        ]
+        for relay in relayURLs {
+            guard let url = URL(string: relay) else { continue }
+            var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 24)
+            request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+            request.setValue("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", forHTTPHeaderField: "Accept")
+            request.setValue("html", forHTTPHeaderField: "x-respond-with")
+            guard let (data, response) = try? await embedSession.data(for: request),
+                  let http = response as? HTTPURLResponse,
+                  (200..<300).contains(http.statusCode),
+                  let html = String(data: data, encoding: .utf8) else { continue }
+            if let views = viewCount(in: html, shortcode: shortcode) {
+                return views
+            }
         }
-        guard let mediaShortcode = stringValue(media["shortcode"]),
-              mediaShortcode.caseInsensitiveCompare(shortcode) == .orderedSame,
-              let views = firstInt64(
-                media["video_view_count"],
-                media["video_play_count"],
-                media["play_count"],
-                media["view_count"]
-              ),
-              views > 0 else {
-            recordSample("view \(shortcode) status=\(status) ctx=1 gql=1 count=0", for: handle)
-            return nil
-        }
-        return views
+
+        recordSample("view \(shortcode) failed status=\(lastStatus)", for: handle)
+        return nil
     }
 
     /// منشورات التضمين: مصفوفة graphql_media، أو كائن واحد، أو خلاصة

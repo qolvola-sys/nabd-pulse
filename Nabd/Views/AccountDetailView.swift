@@ -267,9 +267,10 @@ struct AccountDetailView: View {
                 }
             }
 
-            // تشخيص ظاهر فقط عند فشل قراءة منشورات إنستغرام: يوضّح أي
-            // مصدر نجح وأيها فشل، حتى لا يبقى الصفر بلا تفسير.
-            if current.isInstagram && numbersUnavailable {
+            // تشخيص ظاهر لكل حساب إنستغرام، لا عند الفشل فقط: السطر يبيّن
+            // أي مصدر نجح، وكم ريل قُرئت مشاهداته (`views 4/6`)، فيمكن
+            // معرفة سبب أي «—» بنظرة واحدة بدل التخمين.
+            if current.isInstagram {
                 VStack(spacing: 3) {
                     Text("تشخيص القراءة [\(AppVariant.version)]: \(DirectInstagramService.shared.diagnostic(for: current.handle))")
                         .font(.system(size: 9, design: .monospaced))

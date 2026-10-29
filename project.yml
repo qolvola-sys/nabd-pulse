@@ -80,8 +80,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.nabd.mutabaa
         PRODUCT_NAME: Mutabaa
-        MARKETING_VERSION: "1.6.12"
-        CURRENT_PROJECT_VERSION: "21"
+        MARKETING_VERSION: "1.6.13"
+        CURRENT_PROJECT_VERSION: "22"
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "MUTABAA"
         TARGETED_DEVICE_FAMILY: "1"
         SUPPORTS_MACCATALYST: "NO"
@@ -100,8 +100,8 @@ targets:
         CFBundleDevelopmentRegion: "ar"
         CFBundleLocalizations:
           - ar
-        CFBundleShortVersionString: "1.6.12"
-        CFBundleVersion: "21"
+        CFBundleShortVersionString: "1.6.13"
+        CFBundleVersion: "22"
         LSRequiresIPhoneOS: true
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
