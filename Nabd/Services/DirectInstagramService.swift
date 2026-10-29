@@ -232,7 +232,7 @@ final class DirectInstagramService {
     private var historyLoaded = false
     private let historyStoreKey = "nabd.instagram.history.v1"
     private let historyDays = 9
-    private let historyLimit = 40
+    private let historyLimit = 70
 
     func diagnostic(for handle: String) -> String {
         diagnostics[handle.lowercased()] ?? "لم تُجرَّب بعد"
@@ -1021,13 +1021,29 @@ final class DirectInstagramService {
     /// موجز الريلز العام: طلب واحد يعطي اثني عشر ريلاً مع عدّاد مشاهدات
     /// كل واحد، ويمكن ترقيمه. بلا كوكيز ولا حساب. إن رفض إنستغرام الطلب
     /// (401/429) نكمل بالمصادر الأخرى دون أي أثر على بقية القراءة.
-    private func fetchReelsFeed(ownerID: String, handle: String, pages: Int = 3) async -> [VideoItem] {
+    /// كم صفحة موجز نحتاجها فعلاً.
+    ///
+    /// صفحة واحدة تعطي ١٢ ريلاً، أي أكثر من يوم كامل عند ٧ منشورات.
+    /// فلا نطلب خمس صفحات كل يوم: نطلب فقط ما ينقص لتغطية ٤٩ ريلاً
+    /// (٧ أيام × ٧). بعد أسبوع من التشغيل تصير صفحة واحدة كافية.
+    private func reelsPagesWanted(for handle: String) -> Int {
+        loadHistoryIfNeeded()
+        let key = handle.lowercased()
+        let cutoff = Int(Date().timeIntervalSince1970) - historyDays * daySeconds
+        let known = (postHistory[key] ?? []).filter { $0.createTime >= cutoff }.count
+        let missing = max(0, 49 - min(49, known))
+        let pages = (missing + 11) / 12
+        return max(1, min(5, pages))
+    }
+
+    private func fetchReelsFeed(ownerID: String, handle: String, pages: Int? = nil) async -> [VideoItem] {
         guard !ownerID.isEmpty else { return [] }
         var cursor = ""
         var collected: [VideoItem] = []
         let cutoff = Int(Date().timeIntervalSince1970) - historyDays * daySeconds
+        let limit = pages ?? reelsPagesWanted(for: handle)
 
-        for page in 0..<pages {
+        for page in 0..<limit {
             guard let url = URL(string: "https://www.instagram.com/api/v1/clips/user/") else { break }
             var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 20)
             request.httpMethod = "POST"
@@ -1061,11 +1077,13 @@ final class DirectInstagramService {
             let oldest = collected.map(\.createTime).min() ?? 0
             if !more || next.isEmpty || next == cursor || (oldest > 0 && oldest < cutoff) { break }
             cursor = next
-            try? await Task.sleep(nanoseconds: 700_000_000)
+            try? await Task.sleep(nanoseconds: 900_000_000)
         }
 
         if !collected.isEmpty {
-            recordSample("reels ✓\(collected.count)", for: handle)
+            let span = Int(Date().timeIntervalSince1970) - (collected.map(\.createTime).min() ?? 0)
+            let days = min(7, max(0, span / daySeconds))
+            recordSample("reels ✓\(collected.count) · \(days)/7d", for: handle)
         }
         return collected
     }
