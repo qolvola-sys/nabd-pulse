@@ -1000,9 +1000,9 @@ final class DirectInstagramService {
                 for pause in [2.0, 4.0] {
                     try? await Task.sleep(nanoseconds: UInt64(pause * 1_000_000_000))
                     guard let retry = try? await embedSession.data(for: request),
-                          let http = retry.response as? HTTPURLResponse,
+                          let http = retry.1 as? HTTPURLResponse,
                           (200..<300).contains(http.statusCode),
-                          let html = String(data: retry.data, encoding: .utf8) else { continue }
+                          let html = String(data: retry.0, encoding: .utf8) else { continue }
                     if let views = viewCount(in: html, shortcode: shortcode) {
                         recordSample("view \(shortcode) recovered after rate limit", for: handle)
                         return views
