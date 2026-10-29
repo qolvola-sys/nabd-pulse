@@ -482,7 +482,9 @@ final class AppStore: ObservableObject {
         guard !isDemo else { return }
         guard autoSync else { return }
         guard lastRefreshed != nil, !isLoading, !isSyncing else { return }
-        if let lastAutoRefresh, Date().timeIntervalSince(lastAutoRefresh) < 90 { return }
+        // كل نصف ساعة يكفي: التغطية تحتاج مزامنة يومية واحدة، والتكرار
+        // الكثير يستهلك حصة إنستغرام ويجعل قراءة المشاهدات تُرفض.
+        if let lastAutoRefresh, Date().timeIntervalSince(lastAutoRefresh) < 1800 { return }
         lastAutoRefresh = Date()
         Task { await refresh(showSpinner: false) }
     }

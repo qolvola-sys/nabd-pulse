@@ -105,7 +105,8 @@ struct AccountDetailView: View {
                 return "كل منشورات آخر ٧ أيام المتاحة علناً محمّلة، ومشاهدات الفيديو دقيقة 100%."
             }
             if !current.weeklyComplete {
-                return "الرقم حدّ أدنى: يجمع منشورات الأسبوع المعروفة، وتتسع التغطية مع كل تحديث يومي حتى تكتمل ٧ أيام."
+                let days = DirectInstagramService.shared.coverageDays(for: current.handle)
+                return "تغطية الأسبوع: \(Num.full(Int64(days))) من ٧ أيام — تتسع مع كل تحديث يومي لأن التطبيق يحفظ كل منشور رآه."
             }
             return "≈ مشاهدات إنستغرام متاحة للفيديو والريل فقط؛ منشورات الصور لا تكشف مشاهدات عامة."
         }

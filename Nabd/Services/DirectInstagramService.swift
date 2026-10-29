@@ -274,6 +274,19 @@ final class DirectInstagramService {
         reportSnapshots[handle.lowercased()] ?? makeReport(for: handle)
     }
 
+    /// كم يوماً من الأسبوع يغطيه الأرشيف فعلاً (٠–٧).
+    ///
+    /// يُستخدم لإظهار التغطية بدل الادعاء بأن الرقم نهائي: المقياس هو
+    /// عمر أقدم منشور محفوظ، لا عدد المنشورات.
+    func coverageDays(for handle: String) -> Int {
+        loadHistoryIfNeeded()
+        let items = postHistory[handle.lowercased()] ?? []
+        guard let oldest = items.map(\.createTime).min(), oldest > 0 else { return 0 }
+        let span = Int(Date().timeIntervalSince1970) - oldest
+        guard span > 0 else { return 0 }
+        return min(7, max(0, span / daySeconds))
+    }
+
     private func makeReport(for handle: String) -> String {
         let key = handle.lowercased()
         var lines: [String] = []
@@ -684,10 +697,20 @@ final class DirectInstagramService {
         guard InstagramLinkParser.isValidHandle(handle) else { throw DirectInstagramError.notFound }
 
         let nodes = embedMediaNodes(in: context)
-        // صفحة الحساب لا تنشر مشاهدات الريلز، لكن صفحة كل ريل منفردة
-        // تنشرها للزوار. نقرأها لكل فيديو، فتصبح المشاهدات والتقييم
-        // أرقاماً حقيقية بلا تسجيل دخول.
-        let posts = await enrichViewCounts(mergedWithHistory(buildVideos(from: nodes, handle: handle), handle: handle), handle: handle)
+        // ١) منشورات صفحة الحساب: ٦ أحدث، تشمل الصور والفيديو.
+        var fresh = buildVideos(from: nodes, handle: handle)
+        // ٢) موجز الريلز العام: يعطي ١٢ ريلاً في الطلب مع عدّاد مشاهدات
+        //    كل واحد، ويمكن ترقيمه. إن استجاب فهو أوسع وأسرع من قراءة
+        //    كل صفحة منشور على حدة؛ وإن رفض نكمل بالمصدر الأول.
+        if let ownerID = stringValue(context["owner_id"]) ?? stringValue(context["id"]) {
+            let reels = await fetchReelsFeed(ownerID: ownerID, handle: handle)
+            if !reels.isEmpty {
+                fresh = mergePosts(primary: reels, secondary: fresh)
+            }
+        }
+        // ٣) الأرشيف: يضم كل ما رآه التطبيق خلال ٩ أيام، فيتسع الأسبوع.
+        // ٤) قراءة عدّادات المشاهدات لما لم يأتِ بها الموجز.
+        let posts = await enrichViewCounts(mergedWithHistory(fresh, handle: handle), handle: handle)
         let followers = firstInt64(context["followers_count"], context["follower_count"]) ?? 0
         let following = firstInt64(context["following_count"], context["following"]) ?? 0
         let postsCount = firstInt(context["posts_count"]) ?? 0
@@ -863,7 +886,7 @@ final class DirectInstagramService {
         // لا الفيديوهات الجديدة فقط. الأرشيف يعطي مشاهدات الأيام السابقة،
         // وقراءتها من جديد تجعلها حديثة لا مجمّدة.
         let candidates = videos
-            .filter { $0.isVideo }
+            .filter { $0.isVideo && (!$0.viewsExact || $0.views == 0) }
             .sorted { $0.createTime > $1.createTime }
             .prefix(16)
         let shortcodes = Array(Set(candidates.compactMap { shortcode(from: $0) }))
@@ -984,6 +1007,102 @@ final class DirectInstagramService {
         }
         guard let data = try? JSONEncoder().encode(trimmed) else { return }
         UserDefaults.standard.set(data, forKey: historyStoreKey)
+    }
+
+    /// يدمج مصدرين: الأول أعلى أولوية لأنه يحمل عدّاد مشاهدات منشوراً،
+    /// والثاني يضيف ما ليس في الأول مثل منشورات الصور.
+    private func mergePosts(primary: [VideoItem], secondary: [VideoItem]) -> [VideoItem] {
+        var map: [String: VideoItem] = [:]
+        for item in secondary { map[item.id] = item }
+        for item in primary { map[item.id] = item }
+        return map.values.sorted { $0.createTime > $1.createTime }
+    }
+
+    /// موجز الريلز العام: طلب واحد يعطي اثني عشر ريلاً مع عدّاد مشاهدات
+    /// كل واحد، ويمكن ترقيمه. بلا كوكيز ولا حساب. إن رفض إنستغرام الطلب
+    /// (401/429) نكمل بالمصادر الأخرى دون أي أثر على بقية القراءة.
+    private func fetchReelsFeed(ownerID: String, handle: String, pages: Int = 3) async -> [VideoItem] {
+        guard !ownerID.isEmpty else { return [] }
+        var cursor = ""
+        var collected: [VideoItem] = []
+        let cutoff = Int(Date().timeIntervalSince1970) - historyDays * daySeconds
+
+        for page in 0..<pages {
+            guard let url = URL(string: "https://www.instagram.com/api/v1/clips/user/") else { break }
+            var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 20)
+            request.httpMethod = "POST"
+            request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+            request.setValue("936619743392459", forHTTPHeaderField: "x-ig-app-id")
+            request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+            request.setValue("en-US,en;q=0.9", forHTTPHeaderField: "Accept-Language")
+            let body = "target_user_id=\(ownerID)&page_size=12&include_feed_video=true&max_id=\(cursor)"
+            request.httpBody = body.data(using: .utf8)
+
+            guard let (data, response) = try? await embedSession.data(for: request),
+                  let http = response as? HTTPURLResponse,
+                  http.statusCode == 200,
+                  let json = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]) as? [String: Any] else {
+                recordSample("reels page\(page + 1) unavailable", for: handle)
+                break
+            }
+            let items = json["items"] as? [[String: Any]] ?? []
+            guard !items.isEmpty else { break }
+
+            for entry in items {
+                let media = (entry["media"] as? [String: Any]) ?? entry
+                if let item = reelItem(from: media, handle: handle) {
+                    collected.append(item)
+                }
+            }
+
+            let paging = json["paging_info"] as? [String: Any]
+            let more = firstBool(paging?["more_available"])
+            let next = stringValue(paging?["max_id"]) ?? ""
+            let oldest = collected.map(\.createTime).min() ?? 0
+            if !more || next.isEmpty || next == cursor || (oldest > 0 && oldest < cutoff) { break }
+            cursor = next
+            try? await Task.sleep(nanoseconds: 700_000_000)
+        }
+
+        if !collected.isEmpty {
+            recordSample("reels ✓\(collected.count)", for: handle)
+        }
+        return collected
+    }
+
+    /// يحوّل عنصر الموجز إلى منشور. عدّاد المشاهدات هنا يصل مع الموجز
+    /// نفسه، فلا نحتاج طلب صفحة المنشور له.
+    private func reelItem(from media: [String: Any], handle: String) -> VideoItem? {
+        let shortcode = stringValue(media["code"]) ?? stringValue(media["shortcode"]) ?? ""
+        let id = stringValue(media["pk"]) ?? stringValue(media["id"]) ?? shortcode
+        guard !id.isEmpty else { return nil }
+        let created = firstInt(media["taken_at"], media["taken_at_timestamp"]) ?? 0
+        guard created > 0 else { return nil }
+
+        let views = firstInt64(
+            media["play_count"],
+            media["ig_play_count"],
+            media["view_count"],
+            media["video_view_count"]
+        ) ?? 0
+        let cover = ((media["image_versions2"] as? [String: Any])?["candidates"] as? [[String: Any]])?
+            .first?["url"] as? String
+        let caption = (media["caption"] as? [String: Any])?["text"] as? String
+
+        return VideoItem(
+            id: id,
+            title: caption ?? "",
+            coverUrl: cover,
+            shareUrl: shortcode.isEmpty ? nil : "https://www.instagram.com/reel/\(shortcode)/",
+            duration: firstInt(media["video_duration"]) ?? 0,
+            createTime: created,
+            views: views,
+            likes: firstInt64(media["like_count"]) ?? 0,
+            comments: firstInt64(media["comment_count"]) ?? 0,
+            shares: 0,
+            viewsExact: views > 0,
+            isVideo: true
+        )
     }
 
     /// يبحث عن عدّاد المشاهدات في أي مكان من الشجرة، لا في مسار ثابت.
