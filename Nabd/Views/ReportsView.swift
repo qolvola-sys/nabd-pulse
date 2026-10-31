@@ -15,6 +15,10 @@ struct ReportsView: View {
     @State private var shareFile: ShareFile?
     @State private var showSettings = false
     @State private var pendingDelete: ReportDocument?
+    /// نطاق تاريخي يختاره المستخدم بدل النافذة التلقائية.
+    @State private var customStart: Date?
+    @State private var customEnd: Date?
+    @State private var showRangePicker = false
 
     var body: some View {
         ScrollView(showsIndicators: false) {
@@ -60,6 +64,19 @@ struct ReportsView: View {
             ReportSettingsView()
                 .environmentObject(store)
                 .environmentObject(reports)
+        }
+        .sheet(isPresented: $showRangePicker) {
+            DateRangeSheet(
+                start: window.start,
+                end: window.end,
+                earliest: Calendar.current.startOfDay(
+                    for: Date().addingTimeInterval(-9 * 24 * 60 * 60)
+                )
+            ) { start, end in
+                customStart = start
+                customEnd = end
+                store.haptic(.success)
+            }
         }
         .confirmationDialog(
             "حذف التقرير؟",
@@ -167,7 +184,14 @@ struct ReportsView: View {
     // MARK: - التوليد
 
     private var window: (start: Date, end: Date) {
-        reports.window(for: selectedKind)
+        if let customStart, let customEnd {
+            let calendar = Calendar.current
+            let low = calendar.startOfDay(for: min(customStart, customEnd))
+            let high = calendar.startOfDay(for: max(customStart, customEnd))
+            let endOfDay = calendar.date(byAdding: .second, value: 86_399, to: high) ?? high
+            return (low, endOfDay)
+        }
+        return reports.window(for: selectedKind)
     }
 
     private var manualPagesCount: Int {
@@ -233,7 +257,9 @@ struct ReportsView: View {
                     Image(systemName: selectedKind == .daily ? "sunrise.fill" : "calendar.badge.clock")
                         .font(.system(size: 12, weight: .bold))
                         .foregroundColor(Theme.cyan)
-                    Text(selectedKind == .daily ? "نافذة اليوم" : "نافذة الأسبوع")
+                    Text(customStart == nil
+                         ? (selectedKind == .daily ? "نافذة اليوم" : "نافذة الأسبوع")
+                         : "نافذة مخصصة")
                         .font(.system(size: 12, weight: .bold))
                         .foregroundColor(Theme.text)
                     Spacer()
@@ -246,6 +272,48 @@ struct ReportsView: View {
                     .font(.system(size: 10.5))
                     .foregroundColor(Theme.textTertiary)
                     .lineSpacing(3)
+
+                HStack(spacing: 8) {
+                    Button {
+                        store.haptic(.selection)
+                        showRangePicker = true
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "calendar.range")
+                                .font(.system(size: 10, weight: .bold))
+                            Text(customStart == nil ? "تحديد فترة مخصصة" : "تعديل الفترة")
+                                .font(.system(size: 11, weight: .bold))
+                        }
+                        .foregroundColor(Theme.cyan)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 7)
+                        .background(Capsule().fill(Theme.cyan.opacity(0.12)))
+                        .overlay(Capsule().strokeBorder(Theme.cyan.opacity(0.3), lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+
+                    if customStart != nil {
+                        Button {
+                            store.haptic(.selection)
+                            customStart = nil
+                            customEnd = nil
+                        } label: {
+                            HStack(spacing: 5) {
+                                Image(systemName: "arrow.counterclockwise")
+                                    .font(.system(size: 9, weight: .bold))
+                                Text("النافذة التلقائية")
+                                    .font(.system(size: 10.5, weight: .semibold))
+                            }
+                            .foregroundColor(Theme.textSecondary)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 7)
+                            .background(Capsule().fill(Theme.surfaceRaised))
+                            .overlay(Capsule().strokeBorder(Theme.border, lineWidth: 1))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    Spacer(minLength: 0)
+                }
 
                 HStack(spacing: 6) {
                     Image(systemName: "scissors")
@@ -800,7 +868,8 @@ struct ReportsView: View {
         let document = await reports.generate(
             kind: kind,
             platform: selectedPlatform,
-            store: store
+            store: store,
+            range: customStart == nil ? nil : window
         )
         if let document {
             store.haptic(.success)

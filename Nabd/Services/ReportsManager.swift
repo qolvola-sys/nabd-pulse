@@ -175,7 +175,8 @@ final class ReportsManager: ObservableObject {
         kind: ReportKind,
         platform: ReportPlatform,
         store: AppStore,
-        now: Date = Date()
+        now: Date = Date(),
+        range: (start: Date, end: Date)? = nil
     ) async -> ReportDocument? {
         guard !isGenerating else {
             lastError = "هناك تقرير قيد التوليد الآن."
@@ -194,7 +195,7 @@ final class ReportsManager: ObservableObject {
             return nil
         }
 
-        let window = window(for: kind, now: now)
+        let window = range ?? window(for: kind, now: now)
         let accounts = store.accounts.filter { $0.platform.reportPlatform == platform }
         guard !accounts.isEmpty else {
             lastError = "لا توجد حسابات \(platform.defaultProgram) في المساحة النشطة. أضف حساباً أولاً."
