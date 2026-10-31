@@ -229,7 +229,19 @@ final class DirectInstagramService {
     /// مشاهدات الريلز الحقيقية لكل shortcode. صفحة التضمين المفردة تعرض
     /// `video_view_count` للزوار، بخلاف صفحة الحساب. نخزّنها لتجنب تكرار
     /// الطلب في نفس المزامنة.
-    private var viewCountCache: [String: Int64] = [:]
+    /// وقت آخر قراءة ناجحة لعدّاد كل منشور (ثوانٍ منذ ١٩٧٠).
+    ///
+    /// المشاهدات تراكمية، فمنشور قرأناه يوم نشره يكون رقمه أقل بكثير من
+    /// رقمه بعد أسبوع. هذا الجدول هو ما يسمح بإعادة القراءة بدل تجميد
+    /// أول رقم رآه التطبيق.
+    private var viewReadAt: [String: Int] = [:]
+    private var viewReadLoaded = false
+    private let viewReadStoreKey = "nabd.instagram.viewread.v1"
+    /// لا نعيد قراءة المنشور نفسه قبل ست ساعات، حتى لو تكرر التحديث.
+    private let viewRefreshSeconds = 6 * 60 * 60
+    /// حصة كل حساب في المزامنة الواحدة: تُقرأ الأقدم أولاً فتدور كل
+    /// منشورات الأسبوع، ولا تُغرق إنستغرام بالطلبات في وقت واحد.
+    private let viewRefreshCap = 12
     /// ملخص آخر قراءة للمشاهدات، يظهر في تقرير التشخيص.
     private var lastViewEnrichment = ""
     /// أرشيف منشورات كل حساب، يتراكم بين المزامنات.
@@ -892,21 +904,39 @@ final class DirectInstagramService {
     /// في المنشور، فيصبح مجموع المشاهدات والتقييم الأسبوعي حقيقياً.
     private func enrichViewCounts(_ videos: [VideoItem], handle: String) async -> [VideoItem] {
         lastViewEnrichment = ""
-        // نشمل كل فيديو داخل نافذة الأسبوع حتى يُحدَّث عدّاده كل مزامنة،
-        // لا الفيديوهات الجديدة فقط. الأرشيف يعطي مشاهدات الأيام السابقة،
-        // وقراءتها من جديد تجعلها حديثة لا مجمّدة.
-        let candidates = videos
-            .filter { $0.isVideo && (!$0.viewsExact || $0.views == 0) }
-            .sorted { $0.createTime > $1.createTime }
-            .prefix(16)
-        let shortcodes = Array(Set(candidates.compactMap { shortcode(from: $0) }))
+        loadViewReadsIfNeeded()
+        let now = Int(Date().timeIntervalSince1970)
+
+        // المشاهدات تراكمية: رقم قرأناه أمس ليس رقم اليوم. لهذا لا نكتفي
+        // بقراءة كل منشور مرة واحدة عند ظهوره، بل نعيد قراءته. نرتّب
+        // الأقدم قراءةً أولاً ونأخذ حصة محدودة لكل مزامنة، فتدور كل
+        // منشورات الأسبوع بدل أن تتجمّد أرقام أول يوم.
+        var seen = Set<String>()
+        let pool = videos
+            .filter { $0.isVideo }
+            .compactMap { video -> (VideoItem, String)? in
+                guard let code = shortcode(from: video) else { return nil }
+                return (video, code)
+            }
+            .filter { seen.insert($0.1).inserted }
+
+        let stale = pool
+            .filter { pair in
+                let video = pair.0
+                let code = pair.1
+                if !video.viewsExact || video.views == 0 { return true }
+                return now - (viewReadAt[code] ?? 0) >= viewRefreshSeconds
+            }
+            .sorted { lhs, rhs in
+                (viewReadAt[lhs.1] ?? 0) < (viewReadAt[rhs.1] ?? 0)
+            }
+            .prefix(viewRefreshCap)
+
+        let shortcodes = stale.map(\.1)
         guard !shortcodes.isEmpty else { return videos }
 
         var counts: [String: Int64] = [:]
-        for shortcode in shortcodes {
-            if let cached = viewCountCache[shortcode] { counts[shortcode] = cached }
-        }
-        let missing = shortcodes.filter { counts[$0] == nil }
+        let missing = shortcodes
 
         // طلب واحد في كل مرة، وفاصل بين الطلبات: إنستغرام يحدّ الطلبات
         // من عنوان الجهاز، والتأني أهم من السرعة هنا.
@@ -928,14 +958,14 @@ final class DirectInstagramService {
             for (code, value) in fetched {
                 guard let value else { continue }
                 counts[code] = value
-                // نكتب الذاكرة في المهمة الأم فقط، لا داخل المهام المتوازية.
-                viewCountCache[code] = value
+                viewReadAt[code] = now
             }
             index = end
             if index < missing.count {
                 try? await Task.sleep(nanoseconds: 700_000_000)
             }
         }
+        if !counts.isEmpty { saveViewReads() }
 
         lastViewEnrichment = "views \(counts.count)/\(shortcodes.count)"
         guard !counts.isEmpty else { return videos }
@@ -950,6 +980,28 @@ final class DirectInstagramService {
             updated.viewsExact = true
             return updated
         }
+    }
+
+    /// وقت آخر قراءة ناجحة لكل منشور، محفوظ بين التشغيلات.
+    ///
+    /// بلا هذا الحفظ يتكرر نفس الخطأ بعد كل إعادة تشغيل: يُقرأ كل منشور
+    /// مرة ثم يبقى رقمه مجمّداً، والمجموع الأسبوعي أقل من الحقيقة.
+    private func loadViewReadsIfNeeded() {
+        guard !viewReadLoaded else { return }
+        viewReadLoaded = true
+        guard let data = UserDefaults.standard.data(forKey: viewReadStoreKey),
+              let decoded = try? JSONDecoder().decode([String: Int].self, from: data) else {
+            return
+        }
+        viewReadAt = decoded
+    }
+
+    private func saveViewReads() {
+        // لا نحتفظ بما خرج من الأرشيف نهائياً.
+        let cutoff = Int(Date().timeIntervalSince1970) - historyDays * daySeconds
+        viewReadAt = viewReadAt.filter { $0.value >= cutoff }
+        guard let data = try? JSONEncoder().encode(viewReadAt) else { return }
+        UserDefaults.standard.set(data, forKey: viewReadStoreKey)
     }
 
     /// رقم المنشور (shortcode) من رابط مشاركته.
@@ -975,18 +1027,19 @@ final class DirectInstagramService {
 
         var map: [String: VideoItem] = [:]
         for item in postHistory[key] ?? [] where item.createTime >= cutoff {
-            map[item.id] = item
+            map[mergeKey(item)] = item
         }
         var added = 0
         for item in fresh {
-            if let known = map[item.id] {
+            let keyOfItem = mergeKey(item)
+            if let known = map[keyOfItem] {
                 // الجديد أعلى أولوية، لكن لا نستبدل عدداً معروفاً بصفر
                 // لأن بعض الاستجابات تعود بلا عدّاد.
                 if item.views > 0 || known.views == 0 {
-                    map[item.id] = item
+                    map[keyOfItem] = item
                 }
             } else {
-                map[item.id] = item
+                map[keyOfItem] = item
                 added += 1
             }
         }
@@ -1023,9 +1076,22 @@ final class DirectInstagramService {
     /// والثاني يضيف ما ليس في الأول مثل منشورات الصور.
     private func mergePosts(primary: [VideoItem], secondary: [VideoItem]) -> [VideoItem] {
         var map: [String: VideoItem] = [:]
-        for item in secondary { map[item.id] = item }
-        for item in primary { map[item.id] = item }
+        for item in secondary { map[mergeKey(item)] = item }
+        for item in primary { map[mergeKey(item)] = item }
         return map.values.sorted { $0.createTime > $1.createTime }
+    }
+
+    /// مفتاح موحّد للمنشور: النشر نفسه قد يأتي من صفحة التضمين بمعرّف
+    /// «12345_678» ومن الموجز بمعرّف «12345». توحيد المفتاح يمنع تسجيله
+    /// مرتين، وهو ما كان يضخّم عدد المنشورات ويضاعف بعض المشاهدات.
+    private func mergeKey(_ item: VideoItem) -> String {
+        shortcode(from: item) ?? item.id
+    }
+
+    /// معرّف موحّد: يُقطع لاحق صاحب المنشور «_678» من المعرّف.
+    private func normalizedMediaID(_ raw: String, fallback: String) -> String {
+        let base = raw.split(separator: "_").first.map(String.init) ?? raw
+        return base.isEmpty ? fallback : base
     }
 
     /// موجز الريلز العام: طلب واحد يعطي اثني عشر ريلاً مع عدّاد مشاهدات
@@ -1137,7 +1203,10 @@ final class DirectInstagramService {
     /// نفسه، فلا نحتاج طلب صفحة المنشور له.
     private func reelItem(from media: [String: Any], handle: String) -> VideoItem? {
         let shortcode = stringValue(media["code"]) ?? stringValue(media["shortcode"]) ?? ""
-        let id = stringValue(media["pk"]) ?? stringValue(media["id"]) ?? shortcode
+        let id = normalizedMediaID(
+            stringValue(media["pk"]) ?? stringValue(media["id"]) ?? "",
+            fallback: shortcode
+        )
         guard !id.isEmpty else { return nil }
         let created = firstInt(media["taken_at"], media["taken_at_timestamp"]) ?? 0
         guard created > 0 else { return nil }
@@ -1712,6 +1781,15 @@ final class DirectInstagramService {
         let dailyViewsExact = dailyComplete && recent.allSatisfy { $0.viewsExact }
         let weeklyViewsExact = weeklyComplete && weekly.allSatisfy { $0.viewsExact }
 
+        // سطر تشخيص للنافذة: كم منشوراً عرفناه، وكم فيديو منها له مشاهدات.
+        // بهذا يظهر الفرق بين «تغطية ناقصة» و«عدّاد لم يُقرأ» بدل التخمين.
+        let weeklyVideos = weekly.filter { $0.isVideo }
+        let withViews = weeklyVideos.filter { $0.views > 0 }
+        recordSample(
+            "week \(weekly.count) posts · views \(withViews.count)/\(weeklyVideos.count)",
+            for: handle
+        )
+
         // إذا عرفنا عدد منشورات الحساب أو متابعيه لكن لم نقرأ أي منشور،
         // فالأرقام المعروضة ستكون أصفاراً غير حقيقية. نعلّم الحساب pending
         // حتى تظهر «—» مع سبب واضح بدل 0.
@@ -1764,7 +1842,7 @@ final class DirectInstagramService {
 
     private func videoItem(from node: [String: Any], handle: String) -> VideoItem? {
         let shortcode = stringValue(node["shortcode"]) ?? ""
-        let id = stringValue(node["id"]) ?? shortcode
+        let id = normalizedMediaID(stringValue(node["id"]) ?? "", fallback: shortcode)
         guard !id.isEmpty else { return nil }
 
         let created = firstInt(node["taken_at_timestamp"], node["taken_at"], node["takenAt"]) ?? 0
